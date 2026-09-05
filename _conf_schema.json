@@ -1,0 +1,245 @@
+{
+  "plugin": {
+    "description": "插件基础设置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "保留的配置占位开关（AstrBot 侧由插件管理控制启停）",
+        "type": "bool",
+        "default": true,
+        "invisible": true
+      },
+      "config_version": {
+        "description": "配置版本标记",
+        "type": "string",
+        "default": "1.0.0",
+        "invisible": true
+      }
+    }
+  },
+  "assets": {
+    "description": "本地素材路径",
+    "type": "object",
+    "items": {
+      "cards_dir": {
+        "description": "卡面 PNG 目录",
+        "hint": "默认读取插件 assets/card_data；可填写绝对路径指向外部素材。",
+        "type": "string",
+        "default": "assets/card_data"
+      },
+      "card_info_json": {
+        "description": "卡牌信息 JSON 路径",
+        "hint": "默认读取插件 assets/card_data/card_info_merged.json。",
+        "type": "string",
+        "default": "assets/card_data/card_info_merged.json"
+      }
+    }
+  },
+  "pool": {
+    "description": "模拟器概率权重与卡池轮替",
+    "type": "object",
+    "items": {
+      "weight_n": {
+        "description": "N 权重（正式普通池不使用）",
+        "type": "int",
+        "default": 0
+      },
+      "weight_r": {
+        "description": "R 权重（参照 Artemis 普通池）",
+        "type": "int",
+        "default": 77
+      },
+      "weight_sr": {
+        "description": "SR 权重（参照 Artemis 普通池）",
+        "type": "int",
+        "default": 20
+      },
+      "weight_sr_plus": {
+        "description": "SR+ 权重（正式普通池不使用）",
+        "type": "int",
+        "default": 0
+      },
+      "weight_ssr": {
+        "description": "SSR 权重",
+        "type": "int",
+        "default": 3
+      },
+      "schedule_json": {
+        "description": "官方卡池排表 JSON",
+        "hint": "默认读取插件 assets/card_data/gacha_pools.json。",
+        "type": "string",
+        "default": "assets/card_data/gacha_pools.json"
+      },
+      "rotation_mode": {
+        "description": "卡池选择模式",
+        "hint": "official=按官方日期选池；cycle=按间隔循环历史官方池。",
+        "type": "string",
+        "default": "cycle"
+      },
+      "rotation_interval_days": {
+        "description": "cycle 模式下每个池的持续天数",
+        "type": "int",
+        "slider": {"min": 1, "max": 30, "step": 1},
+        "default": 15
+      },
+      "pickup_multiplier": {
+        "description": "UP 卡相对普通卡的权重倍率",
+        "type": "int",
+        "slider": {"min": 1, "max": 50, "step": 1},
+        "default": 10
+      },
+      "strict_pool_cards": {
+        "description": "按池子候选列表抽取",
+        "hint": "常驻池使用 regular_pool，活动池使用排表 cards。",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "economy": {
+    "description": "点数、签到与消耗配置",
+    "type": "object",
+    "items": {
+      "cost_1": {
+        "description": "1 连消耗点数",
+        "type": "int",
+        "default": 50
+      },
+      "cost_5": {
+        "description": "5 连消耗点数",
+        "type": "int",
+        "default": 250
+      },
+      "cost_11": {
+        "description": "11 连消耗点数",
+        "type": "int",
+        "default": 500
+      },
+      "min_reward": {
+        "description": "每日签到最低点数",
+        "type": "int",
+        "default": 100
+      },
+      "max_reward": {
+        "description": "每日签到最高点数",
+        "type": "int",
+        "default": 250
+      },
+      "tz_offset_hours": {
+        "description": "签到北京时间 UTC 偏移小时数",
+        "type": "int",
+        "slider": {"min": 0, "max": 12, "step": 1},
+        "default": 8
+      },
+      "streak_daily_step": {
+        "description": "连续签到每天递增额外点数",
+        "type": "int",
+        "default": 10
+      },
+      "streak_daily_max": {
+        "description": "连续签到每日额外点数上限",
+        "type": "int",
+        "default": 100
+      },
+      "streak_weekly_reward": {
+        "description": "每连续签到 7 天额外奖励点数",
+        "type": "int",
+        "default": 500
+      },
+      "streak_cycle_days": {
+        "description": "每连续签到多少天发放卡池周期奖励",
+        "type": "int",
+        "default": 15
+      },
+      "streak_cycle_reward": {
+        "description": "卡池周期奖励点数",
+        "type": "int",
+        "default": 1000
+      },
+      "non_gacha_checkin_probability": {
+        "description": "每日签到随机获得非抽卡卡的概率（0～1）",
+        "type": "float",
+        "slider": {"min": 0, "max": 1, "step": 0.01},
+        "default": 0.05
+      },
+      "savings_threshold_1": {
+        "description": "囤点奖励第 1 档门槛",
+        "type": "int",
+        "default": 1000
+      },
+      "savings_bonus_1": {
+        "description": "囤点奖励第 1 档点数",
+        "type": "int",
+        "default": 100
+      },
+      "savings_threshold_2": {
+        "description": "囤点奖励第 2 档门槛",
+        "type": "int",
+        "default": 3000
+      },
+      "savings_bonus_2": {
+        "description": "囤点奖励第 2 档点数",
+        "type": "int",
+        "default": 500
+      },
+      "savings_threshold_3": {
+        "description": "囤点奖励第 3 档门槛",
+        "type": "int",
+        "default": 10000
+      },
+      "savings_bonus_3": {
+        "description": "囤点奖励第 3 档点数",
+        "type": "int",
+        "default": 2000
+      }
+    }
+  },
+  "monthly_card": {
+    "description": "月卡配置",
+    "type": "object",
+    "items": {
+      "price": {
+        "description": "购买月卡消耗点数",
+        "type": "int",
+        "default": 1500
+      },
+      "duration_days": {
+        "description": "月卡有效天数",
+        "type": "int",
+        "default": 30
+      },
+      "daily_bonus": {
+        "description": "月卡有效期每日签到额外点数",
+        "type": "int",
+        "default": 100
+      },
+      "renew_max_remaining_days": {
+        "description": "剩余不超过多少天才能续费",
+        "type": "int",
+        "default": 3
+      },
+      "half_price_5_pull_count": {
+        "description": "购买后赠送的半价五连次数",
+        "type": "int",
+        "default": 2
+      }
+    }
+  },
+  "admin": {
+    "description": "管理员配置",
+    "type": "object",
+    "items": {
+      "admin_ids": {
+        "description": "允许发放点数的管理员 QQ 号列表",
+        "type": "list",
+        "default": []
+      },
+      "allow_local_operator": {
+        "description": "是否允许本地操作用户视为管理员",
+        "hint": "默认关闭；开启后本地操作用户也可使用 /奖励。",
+        "type": "bool",
+        "default": false
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+name: astrbot_plugin_ongeki_gacha
+display_name: 音击抽卡模拟器（AstrBot 版）
+short_desc: 本地娱乐向的音击卡牌抽卡模拟：签到、抽卡、卡册、天井、月卡。
+desc: |
+  音击（ONGEKI）卡牌抽卡模拟器 AstrBot 本地运行版。
+
+  支持每日签到、月卡、连续签到奖励、1/5/11 连抽卡、常驻池、官方卡池轮替、
+  UP 权重与天井兑换；抽卡结果使用本地高清卡面与 Pillow 合成图片，卡册/卡图
+  可以直接查看已收集卡牌。
+
+  使用 `/帮助` 查看全部命令，`/签到` 开始赚点数，`/抽卡 5` 体验五连抽卡。
+  素材默认读取插件目录 `assets/card_data`，可在 WebUI 配置面板改为外部绝对路径。
+version: 1.0.0
+author: DeepSeek-V4
+author_url: https://github.com/DeepSeek-V4-Pro
+category: 娱乐
+tags:
+  - 音击
+  - ONGEKI
+  - 抽卡
+  - 娱乐
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.16,<5"
