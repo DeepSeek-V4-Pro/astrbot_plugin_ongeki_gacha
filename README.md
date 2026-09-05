@@ -27,8 +27,10 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 `<ASTRBOT_ROOT>\data\plugins\`，然后在 WebUI「插件管理」中加载 / 重载插件。
 
 插件安装时会自动安装 `requirements.txt` 中的依赖。首次加载会读取
-`assets/card_data` 下的卡牌 JSON 和 PNG；默认包含了从 ONGEKI 解包素材同步的
-完整本地卡面，体积约 2.5GB。
+`assets/card_data` 下的卡牌 JSON 和 PNG；本地开发副本保留了从 ONGEKI
+素材同步的完整卡面（约 2.5GB），但发布仓库和插件发布包不附带卡面 PNG。
+卡面的来源、获取方式和版权说明见
+[CARD_ARTWORK_SOURCES.md](CARD_ARTWORK_SOURCES.md)。
 
 ## 配置
 
@@ -55,6 +57,8 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 
 卡面 PNG 已被 `.gitignore` 忽略，发布 / 同步仓库时不会携带；本地开发环境
 保留完整素材即可。`sync_card_data.py --check` 可校验素材完整性。
+如需自行取得和校验卡面，请阅读
+[CARD_ARTWORK_SOURCES.md](CARD_ARTWORK_SOURCES.md)。
 
 ## 来源与许可
 

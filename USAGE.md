@@ -16,6 +16,9 @@
 
 如果卡面素材未随插件提供，请先运行数据同步脚本，或在插件配置中指定已有数据的绝对路径。
 
+卡面素材的来源、公开可查询方式和使用权限说明，请阅读
+[CARD_ARTWORK_SOURCES.md](CARD_ARTWORK_SOURCES.md)。
+
 ## 数据目录
 
 默认数据目录：
@@ -27,7 +30,7 @@ assets/card_data/
 其中包含：
 
 - `card_info_merged.json`：卡牌元数据。
-- `card_data_manifest.json`：文件大小和 SHA-256 校验清单。
+- `card_data_manifest.json`：卡面、卡牌 JSON 与 `gacha_pools.json` 的大小和 SHA-256 校验清单。
 - `gacha_pools.json`：官方 CARDMAKER 卡池排表（63 个池，2020-10～2026-07），每个池由“当期版本已有全部 R/SR/SSR 基础卡 + 官方 UP 标记与天井选择名单”组成，每张卡附带 `id / version / cardNumber`、UP/选择标记和非抽卡掉落池。
 - `ui_card_*.png`：卡面素材，通常不随代码仓库分发。
 
@@ -53,7 +56,7 @@ assets/card_data/
 
 ## 数据同步与校验
 
-已有本地素材时，运行：
+已有本地素材时，运行（默认从插件自身的 `assets/card_data/` 读取并生成校验清单）：
 
 ```powershell
 python sync_card_data.py --dry-run
@@ -65,11 +68,12 @@ python sync_card_data.py --check
 
 ```powershell
 python sync_card_data.py `
-  --source D:/path/to/cards `
-  --source-json D:/path/to/card_info_merged.json
+  --source ./path/to/cards `
+  --source-json ./path/to/card_info_merged.json
 ```
 
-`--check` 会校验文件大小与 SHA-256；`--quick` 只检查文件是否存在。
+`--check` 会校验卡面文件大小与 SHA-256，并检查 `card_info_merged.json`、
+`gacha_pools.json` 哈希、manifest 覆盖和重复项；`--quick` 只检查文件是否存在与清单覆盖。
 
 ## 命令
 
@@ -172,7 +176,8 @@ allow_local_operator = false
 ## 故障排查
 
 - 加载失败并提示数据不可用：运行 `sync_card_data.py`，或在配置中填写正确的绝对路径。
-- `/卡池` 显示空排表：确认 `assets/card_data/gacha_pools.json` 存在，或运行 `archive/scripts/crawl_ongeki_gacha_pools.py` 重新生成。
+- `/卡池` 显示空排表：确认 `assets/card_data/gacha_pools.json` 存在。
+  插件发布包随附该排表；如果排表损坏或丢失，请重新获取插件包。
 - `/卡池` 显示 `UP 卡：0 张`：官方公告没有提供 UP 名单时属于正常；可发送 `/天井列表` 查看天井选择卡，发送 `/概率` 查看实际稀有度权重。
 - 卡图命令提示未拥有：该命令只允许查询当前玩家已获得的卡牌。
 - 签到重复提示：同一日期只能签到一次。

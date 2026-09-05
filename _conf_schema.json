@@ -126,9 +126,9 @@
         "default": 250
       },
       "tz_offset_hours": {
-        "description": "签到北京时间 UTC 偏移小时数",
+        "description": "签到时区 UTC 偏移小时数",
         "type": "int",
-        "slider": {"min": 0, "max": 12, "step": 1},
+        "slider": {"min": -12, "max": 14, "step": 1},
         "default": 8
       },
       "streak_daily_step": {
