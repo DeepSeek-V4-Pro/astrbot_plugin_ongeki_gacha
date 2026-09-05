@@ -234,6 +234,13 @@ class GachaDatabase:
                 created_at    TEXT NOT NULL,
                 FOREIGN KEY(target_id) REFERENCES players(qq_id)
             );
+
+            CREATE TABLE IF NOT EXISTS identity_aliases (
+                alias        TEXT PRIMARY KEY,
+                user_id      TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
             """
         )
         existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(players)").fetchall()}
@@ -361,6 +368,171 @@ class GachaDatabase:
         if row is None:
             raise RuntimeError(f"创建玩家失败: {qq_id}")
         return row
+
+    def bind_identity(self, user_id: str, alias: str) -> tuple[bool, str]:
+        """绑定外部别名（如 QQ 号）到当前 AstrBot 内部用户 ID。"""
+        alias = str(alias or "").strip()
+        user_id = str(user_id or "").strip()
+        if not alias:
+            return False, "别名不能为空"
+        if not user_id:
+            return False, "用户 ID 不能为空"
+        if alias == user_id:
+            return True, "已使用内部 ID"
+        now = self._now_iso()
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            conn = self._conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = conn.execute(
+                    "SELECT user_id FROM identity_aliases WHERE alias = ?",
+                    (alias,),
+                ).fetchone()
+                if existing is not None and str(existing["user_id"]) != user_id:
+                    conn.execute("ROLLBACK")
+                    return False, f"别名 {alias} 已绑定到其他用户"
+                self._merge_player(conn, alias, user_id)
+                conn.execute(
+                    """
+                    INSERT INTO identity_aliases(alias, user_id, created_at, updated_at)
+                    VALUES(?, ?, ?, ?)
+                    ON CONFLICT(alias) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        updated_at = excluded.updated_at
+                    """,
+                    (alias, user_id, now, now),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return True, f"已绑定 {alias} -> {user_id}"
+
+    def resolve_identity(self, alias: str) -> str | None:
+        """把数字 QQ 等外部别名解析为内部用户 ID。"""
+        alias = str(alias or "").strip()
+        if not alias:
+            return None
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            row = self._conn.execute(
+                "SELECT user_id FROM identity_aliases WHERE alias = ?",
+                (alias,),
+            ).fetchone()
+        return str(row["user_id"]) if row is not None else None
+
+    def _merge_player(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        target_id: str,
+    ) -> None:
+        """把旧平台的数字 QQ 档案合并到当前 openid 档案。"""
+        if source_id == target_id:
+            return
+        source = conn.execute(
+            "SELECT * FROM players WHERE qq_id = ?",
+            (source_id,),
+        ).fetchone()
+        if source is None:
+            return
+        self._ensure_player(conn, target_id)
+        target = self._player_state(conn, target_id)
+        conn.execute(
+            """
+            UPDATE players
+            SET points = points + ?,
+                total_checkins = total_checkins + ?,
+                total_pulls = total_pulls + ?,
+                streak_days = MAX(streak_days, ?),
+                updated_at = ?
+            WHERE qq_id = ?
+            """,
+            (
+                int(source["points"]),
+                int(source["total_checkins"]),
+                int(source["total_pulls"]),
+                int(source["streak_days"]),
+                self._now_iso(),
+                target_id,
+            ),
+        )
+        if str(source["monthly_card_expires_at"] or "") > str(
+            target.monthly_card_expires_at or ""
+        ):
+            conn.execute(
+                """
+                UPDATE players
+                SET monthly_card_expires_at = ?,
+                    monthly_card_purchased_at = ?,
+                    monthly_card_purchase_count = MAX(monthly_card_purchase_count, ?),
+                    half_price_5_pull_count = half_price_5_pull_count + ?
+                WHERE qq_id = ?
+                """,
+                (
+                    source["monthly_card_expires_at"],
+                    source["monthly_card_purchased_at"],
+                    int(source["monthly_card_purchase_count"]),
+                    int(source["half_price_5_pull_count"]),
+                    target_id,
+                ),
+            )
+        conn.execute(
+            """
+            INSERT INTO checkins(qq_id, checkin_date, reward, created_at)
+            SELECT ?, checkin_date, reward, created_at FROM checkins
+            WHERE qq_id = ?
+            ON CONFLICT(qq_id, checkin_date) DO NOTHING
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO inventory(qq_id, card_id, copies, is_kaika, is_cho_kaika,
+                                  first_obtained_at, last_obtained_at)
+            SELECT ?, card_id, copies, is_kaika, is_cho_kaika,
+                   first_obtained_at, last_obtained_at
+            FROM inventory WHERE qq_id = ?
+            ON CONFLICT(qq_id, card_id) DO UPDATE SET
+                copies = inventory.copies + excluded.copies,
+                is_kaika = inventory.is_kaika OR excluded.is_kaika,
+                is_cho_kaika = inventory.is_cho_kaika OR excluded.is_cho_kaika,
+                last_obtained_at = MAX(inventory.last_obtained_at, excluded.last_obtained_at)
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO pool_select_state(qq_id, pool_id, select_points,
+                                          max_select_points, select_claimed, updated_at)
+            SELECT ?, pool_id, select_points, max_select_points,
+                   select_claimed, updated_at
+            FROM pool_select_state WHERE qq_id = ?
+            ON CONFLICT(qq_id, pool_id) DO UPDATE SET
+                select_points = pool_select_state.select_points + excluded.select_points,
+                max_select_points = MAX(pool_select_state.max_select_points,
+                                        excluded.max_select_points),
+                select_claimed = pool_select_state.select_claimed OR excluded.select_claimed,
+                updated_at = MAX(pool_select_state.updated_at, excluded.updated_at)
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            "UPDATE gacha_logs SET qq_id = ? WHERE qq_id = ?",
+            (target_id, source_id),
+        )
+        conn.execute(
+            "UPDATE admin_grants SET grantor_id = ? WHERE grantor_id = ?",
+            (target_id, source_id),
+        )
+        conn.execute(
+            "UPDATE admin_grants SET target_id = ? WHERE target_id = ?",
+            (target_id, source_id),
+        )
+        conn.execute("DELETE FROM players WHERE qq_id = ?", (source_id,))
 
     def weekly_5_guarantee_available(
         self,

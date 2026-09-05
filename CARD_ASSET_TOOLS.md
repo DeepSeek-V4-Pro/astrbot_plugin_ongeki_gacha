@@ -190,11 +190,8 @@ python card_asset_tools.py import `
   --dest .\my_card_data
 ```
 
-```toml
-[assets]
-cards_dir = "<你的素材目录>"
-card_info_json = "<你的素材目录>/card_info_merged.json"
-```
+在 AstrBot WebUI 的「素材路径」分组中，把 `cards_dir` 与
+`card_info_json` 设置为该独立目录即可。
 
 ### 4. 校验
 
@@ -232,7 +229,7 @@ python sync_card_data.py --check
 - `card_asset_tools.py` 只依赖插件已有的 `Pillow`。
 - `compose_card_art.py` 的浏览器合成为可选功能，需要用户自行安装
   `playwright`；安装浏览器后脚本会优先使用本机 Edge/Chrome 或 Playwright 自带 Chromium。
-- 如果只分发脚本而不分发素材，请在插件配置中保留默认 `assets/card_data` 路径，
+如果只分发脚本而不分发素材，请在 AstrBot 插件配置中保留默认 `assets/card_data` 路径，
   或让用户按本说明把素材接入自己的数据目录。
 
 继续阅读：

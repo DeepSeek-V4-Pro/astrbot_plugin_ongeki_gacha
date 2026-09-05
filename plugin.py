@@ -388,7 +388,7 @@ class OngekiGachaPlugin(MaiBotPlugin):
             "/签到　/抽卡　/点数\n"
             "/月卡　/卡册　/卡图\n"
             "/卡池　/天井　/概率\n"
-            "/天井列表　/规则　/帮助\n"
+            "/天井列表　/绑定QQ　/规则　/帮助\n"
             "详细用法发送 /规则"
         )
 
@@ -470,15 +470,18 @@ class OngekiGachaPlugin(MaiBotPlugin):
         if user_id == "local-operator" and self.config.admin.allow_local_operator:
             return True
         raw_ids = self.config.admin.admin_ids or []
-        return any(
-            str(item).strip() == user_id
-            for item in raw_ids
-            if str(item).strip()
-        )
+        for item in raw_ids:
+            raw = str(item).strip()
+            if not raw:
+                continue
+            if raw == user_id:
+                return True
+            if self._db is not None and self._db.resolve_identity(raw) == user_id:
+                return True
+        return False
 
-    @staticmethod
-    def _parse_grant(kwargs: dict[str, Any]) -> tuple[str, int, str] | None:
-        """解析奖励指令的目标 QQ、点数和可选备注。"""
+    def _parse_grant(self, kwargs: dict[str, Any]) -> tuple[str, int, str] | None:
+        """解析奖励指令的目标 ID、点数和可选备注。"""
         groups = kwargs.get("matched_groups")
         if isinstance(groups, dict):
             target_id = str(groups.get("target_id") or "").strip()
@@ -487,18 +490,30 @@ class OngekiGachaPlugin(MaiBotPlugin):
             note = str(groups.get("note") or "").strip()
             if raw_amount.isdigit() and int(raw_amount) > 0:
                 if target_id.isdigit():
-                    return target_id, int(raw_amount), note
+                    resolved_id = self._resolve_identity(target_id)
+                    if resolved_id is None:
+                        return None
+                    return resolved_id, int(raw_amount), note
                 if target_at.startswith("@"):
                     resolved_id = OngekiGachaPlugin._extract_at_target_id(kwargs)
                     if resolved_id:
                         return resolved_id, int(raw_amount), note
-                    literal_id = target_at[1:].strip()
-                    if literal_id.isdigit():
-                        return literal_id, int(raw_amount), note
+                    literal_id = target_at.strip("@<>")
+                    resolved_id = self._resolve_identity(literal_id)
+                    if resolved_id:
+                        return resolved_id, int(raw_amount), note
+                if target_at.startswith("<"):
+                    resolved_id = OngekiGachaPlugin._extract_at_target_id(kwargs)
+                    if resolved_id:
+                        return resolved_id, int(raw_amount), note
+                    literal_id = target_at.strip("@<>")
+                    resolved_id = self._resolve_identity(literal_id)
+                    if resolved_id:
+                        return resolved_id, int(raw_amount), note
 
         text = str(kwargs.get("text") or "")
         match = re.search(
-            r"@([^\s]+)\s+(\d+)(?:\s+(.+))?",
+            r"(?:@|<@)([^\s>]+)\s+(\d+)(?:\s+(.+))?",
             text,
         )
         if match is None:
@@ -511,18 +526,37 @@ class OngekiGachaPlugin(MaiBotPlugin):
         amount = int(match.group(2))
         if amount <= 0:
             return None
-        if match.group(0).startswith("@"):
+        if match.group(0).startswith(("@", "<")):
             resolved_id = OngekiGachaPlugin._extract_at_target_id(kwargs)
             if resolved_id:
                 return resolved_id, amount, str(match.group(3) or "").strip()
-            literal_id = match.group(1).strip()
-            if literal_id.isdigit():
-                return literal_id, amount, str(match.group(3) or "").strip()
-        return match.group(1), amount, str(match.group(3) or "").strip()
+            literal_id = match.group(1).strip("@<>")
+            resolved_id = self._resolve_identity(literal_id)
+            if resolved_id:
+                return resolved_id, amount, str(match.group(3) or "").strip()
+            return None
+        resolved_id = self._resolve_identity(match.group(1))
+        if resolved_id is None:
+            return None
+        return resolved_id, amount, str(match.group(3) or "").strip()
+
+    def _resolve_identity(self, alias: str) -> str | None:
+        """把外部别名解析到数据库统一内部 ID；未绑定则返回 None。"""
+        alias = str(alias or "").strip()
+        if not alias:
+            return None
+        if self._db is not None:
+            resolved = self._db.resolve_identity(alias)
+            if resolved:
+                return resolved
+        # openid 可能是非数字 ID，直接作为内部 ID 使用
+        if not alias.isdigit():
+            return alias
+        return None
 
     @staticmethod
     def _extract_at_target_id(kwargs: dict[str, Any]) -> str | None:
-        """从 MaiBot 传入的原始消息组件中提取被 @ 目标的 QQ。"""
+        """从 MaiBot 传入的原始消息组件中提取被 @ 目标 ID。"""
         message = kwargs.get("message")
         if not isinstance(message, dict):
             return None
@@ -538,7 +572,7 @@ class OngekiGachaPlugin(MaiBotPlugin):
             if not isinstance(data, dict):
                 continue
             target_id = str(data.get("target_user_id") or "").strip()
-            if target_id.isdigit():
+            if target_id:
                 return target_id
         return None
 
@@ -1137,7 +1171,7 @@ class OngekiGachaPlugin(MaiBotPlugin):
     @Command(
         "ongeki_grant_points",
         description="管理员向指定 QQ 用户发放点数",
-        pattern=r"^/(?:奖励|发放点数|发点数)\s+(?:(?P<target_at>@\S+)|(?P<target_id>\d+))\s+(?P<amount>\d+)(?:\s+(?P<note>.+))?\s*$",
+        pattern=r"^/(?:奖励|发放点数|发点数)\s+(?:(?P<target_at>@\S+|@?<\S+>)|(?P<target_id>\d+))\s+(?P<amount>\d+)(?:\s+(?P<note>.+))?\s*$",
         aliases=["/奖励", "/发点数", "/发放点数"],
     )
     async def handle_grant_points(
@@ -1178,6 +1212,39 @@ class OngekiGachaPlugin(MaiBotPlugin):
                 text += f"\n备注：{note}"
         else:
             text = receipt.error or "发放点数失败"
+        await self._send_text(stream_id, text)
+        return True, text, True
+
+    @Command(
+        "ongeki_bind_identity",
+        description="绑定当前用户的 QQ 号，便于管理员使用数字 QQ 发放点数",
+        pattern=r"^/(?:绑定|绑定QQ|绑定qq|绑定QQ号|绑定qq号)\s*(?P<qq_id>\d+)\s*$",
+        aliases=["/绑定QQ", "/绑定QQ号", "/绑定QQ号"],
+    )
+    async def handle_bind_identity(
+        self,
+        stream_id: str = "",
+        **kwargs: dict[str, Any],
+    ) -> tuple[bool, str, bool]:
+        """把当前内部用户 ID 与数字 QQ 号绑定。"""
+        user_id = self._user_id(kwargs)
+        groups = kwargs.get("matched_groups")
+        raw_qq = (
+            str(groups.get("qq_id") or "").strip()
+            if isinstance(groups, dict)
+            else ""
+        )
+        if not raw_qq.isdigit():
+            text = "用法：/绑定QQ <QQ号>，例如 /绑定QQ 3130274394"
+            await self._send_text(stream_id, text)
+            return True, text, True
+        if self._db is None:
+            text = "插件尚未初始化完成，请检查日志"
+            await self._send_text(stream_id, text)
+            return True, text, True
+        ok, text = self._db.bind_identity(user_id, raw_qq)
+        if not ok:
+            text = f"绑定失败：{text}"
         await self._send_text(stream_id, text)
         return True, text, True
 

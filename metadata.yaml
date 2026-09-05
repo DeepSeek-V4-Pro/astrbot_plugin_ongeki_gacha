@@ -10,7 +10,7 @@ desc: |
 
   使用 `/帮助` 查看全部命令，`/签到` 开始赚点数，`/抽卡 5` 体验五连抽卡。
   素材默认读取插件目录 `assets/card_data`，可在 WebUI 配置面板改为外部绝对路径。
-version: 1.0.0
+version: 1.1.0
 author: DeepSeek-V4
 author_url: https://github.com/DeepSeek-V4-Pro
 repo: https://github.com/DeepSeek-V4-Pro/astrbot_plugin_ongeki_gacha
@@ -22,4 +22,5 @@ tags:
   - 娱乐
 support_platforms:
   - aiocqhttp
-astrbot_version: ">=4.16,<5"
+  - qq_official
+astrbot_version: ">=4.26,<5"

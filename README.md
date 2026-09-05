@@ -1,6 +1,6 @@
 # 音击抽卡模拟器（AstrBot 版）
 
-版本：1.0.0
+版本：1.1.0
 
 本目录是 [ongeki_gacha](https://github.com/DeepSeek-V4-Pro/ongeki_gacha)
 （MaiBot 版原作）的 AstrBot 本地运行版。抽卡规则、数据库、卡池排表和
@@ -17,6 +17,7 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 - `/卡图 <ID>`：发送已拥有的高清卡面；
 - `/卡池 [列表|下一期]`：查看当前 / 未来卡池与 UP 信息；
 - `/天井 <ID>` / `/天井列表`：天井状态和兑换；
+- `/绑定QQ <QQ号>`：把当前 AstrBot 内部 ID 与数字 QQ 绑定，合并重复玩家数据；
 - `/概率`：查看当前权重与保底规则；
 - `/奖励 @用户 <点数> [备注]`：管理员发放点数；
 - `/规则` / `/帮助`：完整玩法和命令说明。
@@ -25,6 +26,9 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 
 把整个 `astrbot_plugin_ongeki_gacha` 目录放到
 `<ASTRBOT_ROOT>\data\plugins\`，然后在 WebUI「插件管理」中加载 / 重载插件。
+
+支持 OneBot（`aiocqhttp`）和 QQ 官方机器人（`qq_official`）。QQ 官方适配器
+只提供内部 openid，不使用数字 QQ 识别用户；请先用 `/绑定QQ <QQ号>` 建立关联。
 
 插件安装时会自动安装 `requirements.txt` 中的依赖。首次加载会读取
 `assets/card_data` 下的卡牌 JSON 和 PNG；本地开发副本保留了从 ONGEKI
@@ -43,7 +47,7 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 | 概率权重 | R/SR/SSR 权重、UP 倍率、轮替模式与间隔 |
 | 点数 | 抽卡消耗、签到奖励、连续签到与囤点档位 |
 | 月卡 | 价格、有效期、每日加成与半价五连次数 |
-| 管理员 | 可使用 `/奖励` 的 QQ 列表 |
+| 管理员 | 可使用 `/奖励` 的列表；QQ 官方适配器填内部 ID（openid），也可绑定数字 QQ |
 
 运行数据（SQLite 数据库、抽卡临时图）保存在 AstrBot 为插件分配的
 `data/plugin_data/astrbot_plugin_ongeki_gacha/` 目录，不会写入插件目录。

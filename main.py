@@ -76,9 +76,11 @@ class AstrBotSend:
                     if isinstance(seg, dict) and seg.get("type") == "text":
                         text_seg = str(seg.get("content") or seg.get("data") or "")
                         content.append(Comp.Plain(text_seg))
+                raw_uin = str(node.get("user_id", "0"))
+                uin = raw_uin if raw_uin.isdigit() else "0"
                 astr_nodes.append(
                     Comp.Node(
-                        uin=str(node.get("user_id", "0")),
+                        uin=uin,
                         name=str(node.get("nickname", "")),
                         content=content,
                     )
@@ -189,6 +191,13 @@ class OngekiGachaStar(Star):
             commands.append(
                 {
                     "meta": meta,
+                    "alias_patterns": [
+                        re.compile(
+                            r"^" + re.escape(str(alias).strip()) + r"(?:[ \t]+.*)?$"
+                        )
+                        for alias in (meta.get("aliases") or [])
+                        if str(alias).strip()
+                    ],
                     # 把类上的函数绑定到插件实例（否则调用时缺少 self）。
                     "handler": func.__get__(self._inner, type(self._inner)),
                 }
@@ -209,20 +218,43 @@ class OngekiGachaStar(Star):
     def _at_components(event: AstrMessageEvent) -> list[dict]:
         """把 AstrBot 消息链中的 @ 段转换成原插件能识别的原始组件。"""
         result: list[dict] = []
+        self_id = str(event.get_self_id() or "")
         try:
             for component in event.get_messages() or []:
                 if not hasattr(component, "qq"):
                     continue
                 qq = getattr(component, "qq", "")
-                if str(qq).strip().isdigit():
+                qq = str(qq or "").strip()
+                if qq and qq not in {"all", "qq_official"} and qq != self_id:
                     result.append(
                         {
                             "type": "at",
-                            "data": {"target_user_id": str(qq)},
+                            "data": {"target_user_id": qq},
                         }
                     )
         except Exception:
             logger.debug("读取 AstrBot @ 消息组件失败", exc_info=True)
+        try:
+            raw_message = getattr(event.message_obj, "raw_message", None)
+            mentions = getattr(raw_message, "mentions", None) or []
+            for mention in mentions:
+                if getattr(mention, "is_you", False):
+                    continue
+                mention_id = str(
+                    getattr(mention, "id", None)
+                    or getattr(mention, "user_id", None)
+                    or ""
+                ).strip()
+                if not mention_id or mention_id == self_id:
+                    continue
+                result.append(
+                    {
+                        "type": "at",
+                        "data": {"target_user_id": mention_id},
+                    }
+                )
+        except Exception:
+            logger.debug("读取 AstrBot 原始 @ mention 失败", exc_info=True)
         return result
 
     async def _send_chain(self, chain: MessageChain) -> None:
@@ -249,14 +281,20 @@ class OngekiGachaStar(Star):
 
         for cmd in self._commands:
             match = cmd["meta"]["pattern"].match(text)
+            alias_match = None
             if not match:
+                for alias_pattern in cmd["alias_patterns"]:
+                    alias_match = alias_pattern.match(text)
+                    if alias_match:
+                        break
+            if not match and alias_match is None:
                 continue
 
             token = _current_event.set(event)
             try:
                 await cmd["handler"](
                     stream_id=event.unified_msg_origin,
-                    matched_groups=match.groupdict(),
+                    matched_groups=match.groupdict() if match else {},
                     user_id=event.get_sender_id(),
                     text=text,
                     message={
