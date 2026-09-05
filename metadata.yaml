@@ -13,6 +13,7 @@ desc: |
 version: 1.0.0
 author: DeepSeek-V4
 author_url: https://github.com/DeepSeek-V4-Pro
+repo: https://github.com/DeepSeek-V4-Pro/astrbot_plugin_ongeki_gacha
 category: 娱乐
 tags:
   - 音击
