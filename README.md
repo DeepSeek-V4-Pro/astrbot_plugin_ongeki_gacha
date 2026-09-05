@@ -68,3 +68,6 @@ MaiBot SDK 兼容层，并把消息入口、配置与数据目录接到 AstrBot�
 详细玩法见 [USAGE.md](USAGE.md)，免责声明见
 [DISCLAIMER.md](DISCLAIMER.md)，第三方素材声明见
 [NOTICE.md](NOTICE.md)。
+
+卡面获取方式：[CARD_ARTWORK_SOURCES.md](CARD_ARTWORK_SOURCES.md)<br>
+素材接入工具：[CARD_ASSET_TOOLS.md](CARD_ASSET_TOOLS.md)
