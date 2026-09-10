@@ -150,7 +150,7 @@ def _build_rows(
             continue
         for chunk in _wrap_text(draw, line, body_font, inner_width):
             rows.append(("body", chunk))
-    while rows and rows[-1][0] == "space":
+    while rows and rows[-1][0] in {"space", "section"}:
         rows.pop()
     return rows
 

@@ -72,7 +72,7 @@
       },
       "rotation_mode": {
         "description": "卡池选择模式",
-        "hint": "official=按官方日期选池；cycle=按间隔循环历史官方池。",
+        "hint": "official=按几月几日复现历史官方池（忽略年份）；cycle=按间隔循环历史官方池。",
         "type": "string",
         "default": "cycle"
       },
