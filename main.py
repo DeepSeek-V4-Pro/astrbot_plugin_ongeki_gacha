@@ -1,11 +1,10 @@
-"""AstrBot 版：音击抽卡模拟器。
+"""音击抽卡模拟器。
 
-原插件是 MaiBot 插件，业务规则全部集中在 ``gacha_*`` 模块与
-``plugin.py`` 中。这里通过 ``maibot_sdk`` 兼容层复用原业务代码，并完成与
-AstrBot Star 体系的接入：
+业务规则全部集中在 ``gacha_*`` 模块与 ``plugin.py`` 中，这里统一完成
+命令分发、消息发送、配置与数据目录的接入：
 
 - ``@Command`` 声明里的正则在这里统一匹配并分发；
-- ``ctx.send.*`` 与 ``ctx.paths`` 映射到 AstrBot 事件 / 插件数据目录；
+- ``ctx.send.*`` 与 ``ctx.paths`` 映射到插件事件 / 插件数据目录；
 - 图片输出使用 MessageChain 的 base64 / 文件图片能力。
 """
 
@@ -61,14 +60,15 @@ class AstrBotSend:
         await self._star._send_chain(chain)
 
     async def forward(self, nodes: list[dict], stream_id: str = "") -> None:
-        """发送合并转发；非 OneBot 平台自动降级为纯文本。"""
+        """发送合并转发；不支持合并转发的平台降级为结构化文本。"""
         del stream_id
         event = self._star.current_event()
         if event is None:
             logger.warning("forward 调用时缺少当前事件，消息被丢弃")
             return
 
-        if event.get_platform_name() == "aiocqhttp":
+        platform = event.get_platform_name()
+        if platform == "aiocqhttp":
             astr_nodes = []
             for node in nodes or []:
                 content = []
@@ -86,6 +86,22 @@ class AstrBotSend:
                     )
                 )
             chain = MessageChain(chain=[Comp.Nodes(astr_nodes)])
+        elif platform in {"qq_official", "qq_official_webhook"}:
+            # QQ 官方机器人开放平台没有合并转发接口，改用 Markdown 渲染长内容。
+            title = ""
+            lines: list[str] = []
+            for node in nodes or []:
+                nickname = str(node.get("nickname", "")).strip()
+                if nickname and not title:
+                    title = nickname
+                for seg in node.get("segments", []):
+                    if isinstance(seg, dict) and seg.get("type") == "text":
+                        line = str(seg.get("content") or seg.get("data") or "").strip()
+                        if line:
+                            lines.append(line)
+            body = "\n".join(lines)
+            markdown = f"**{title}**\n\n{body}" if title else body
+            chain = MessageChain().message(markdown).use_markdown(True)
         else:
             lines = []
             for node in nodes or []:
@@ -118,7 +134,7 @@ class AstrBotCtx:
 
 
 class OngekiGachaStar(Star):
-    """AstrBot 版音击抽卡模拟器。"""
+    """音击抽卡模拟器。"""
 
     def __init__(
         self,
@@ -257,6 +273,40 @@ class OngekiGachaStar(Star):
             logger.debug("读取 AstrBot 原始 @ mention 失败", exc_info=True)
         return result
 
+    @staticmethod
+    def _image_components(event: AstrMessageEvent) -> list[dict]:
+        """把 AstrBot 消息链中的图片段转换成原插件能识别的原始组件。"""
+        result: list[dict] = []
+        try:
+            image_type = getattr(
+                getattr(Comp, "ComponentType", None),
+                "Image",
+                None,
+            )
+            for component in event.get_messages() or []:
+                component_type = getattr(component, "type", None)
+                if (
+                    image_type is not None
+                    and component_type != image_type
+                    and not str(component_type or "").lower().endswith("image")
+                ):
+                    continue
+                if image_type is None and not str(
+                    component_type or ""
+                ).lower().endswith("image"):
+                    continue
+                result.append(
+                    {
+                        "type": "image",
+                        "url": str(getattr(component, "url", "") or ""),
+                        "file": str(getattr(component, "file", "") or ""),
+                        "path": str(getattr(component, "path", "") or ""),
+                    }
+                )
+        except Exception:
+            logger.debug("读取 AstrBot 图片消息组件失败", exc_info=True)
+        return result
+
     async def _send_chain(self, chain: MessageChain) -> None:
         event = self.current_event()
         if event is None:
@@ -301,7 +351,10 @@ class OngekiGachaStar(Star):
                         "message_info": {
                             "user_info": {"user_id": event.get_sender_id()}
                         },
-                        "raw_message": self._at_components(event),
+                        "raw_message": (
+                            self._at_components(event)
+                            + self._image_components(event)
+                        ),
                     },
                 )
             except Exception:

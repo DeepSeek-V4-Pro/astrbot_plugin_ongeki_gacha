@@ -14,9 +14,8 @@ Artemis 以 GNU Affero General Public License v3 授权；本项目仅从公开�
 
 ## MaiBot / MaiBot SDK
 
-原项目作为 MaiBot 插件运行；本 AstrBot 运行版内置一个最小
-`maibot_sdk` 兼容层以复用原业务代码。MaiBot SDK 及其依赖不属于本项目，
-请遵循其各自许可；AstrBot 运行环境由 AstrBot 提供。
+本项目内置一个最小 `maibot_sdk` 兼容层以复用原业务代码。MaiBot SDK 及其
+依赖不属于本项目，请遵循其各自许可。
 
 ## SEGA 与第三方游戏素材
 

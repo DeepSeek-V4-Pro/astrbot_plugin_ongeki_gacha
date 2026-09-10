@@ -92,6 +92,16 @@ class PoolEntry:
             return False
         return self.start_date <= day < self.end_date
 
+    @property
+    def featured_count(self) -> int:
+        """Return the number of pickup cards in this pool."""
+        return sum(1 for card in self.cards.values() if card.is_pickup)
+
+    @property
+    def select_count(self) -> int:
+        """Return the number of selectable cards in this pool."""
+        return sum(1 for card in self.cards.values() if card.is_select)
+
     def up_ssr_cards(self) -> list[PoolCard]:
         """Return pickup SSR cards for this pool, sorted by card id."""
         return sorted(
@@ -177,10 +187,25 @@ class GachaSchedule:
             return None
         return max(active, key=lambda item: item.start_date or date.min)
 
-    def cycle_for(self, day: date, interval_days: int = 7) -> PoolEntry | None:
+    def active_for_all(self, day: date) -> tuple[PoolEntry, ...]:
+        """Return every official pool active on ``day``."""
+        return tuple(
+            entry
+            for entry in self.entries
+            if entry.is_active(day)
+        )
+
+    def cycle_for(
+        self,
+        day: date,
+        interval_days: int = 7,
+        epoch: date | None = None,
+    ) -> PoolEntry | None:
         """Return a deterministic historical pool for a rotation interval."""
         if not self.entries:
             return None
         interval = max(int(interval_days), 1)
-        index = (day.toordinal() // interval) % len(self.entries)
+        base = epoch or date.min
+        elapsed_days = max((day - base).days, 0)
+        index = (elapsed_days // interval) % len(self.entries)
         return self.entries[index]

@@ -4,7 +4,7 @@
     "type": "object",
     "items": {
       "enabled": {
-        "description": "保留的配置占位开关（AstrBot 侧由插件管理控制启停）",
+        "description": "保留的配置占位开关（由插件管理控制启停）",
         "type": "bool",
         "default": true,
         "invisible": true
@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本标记",
         "type": "string",
-        "default": "1.1.0",
+        "default": "1.2",
         "invisible": true
       }
     }
@@ -126,10 +126,10 @@
         "default": 250
       },
       "tz_offset_hours": {
-        "description": "签到时区 UTC 偏移小时数",
+        "description": "保留字段，日期与任务重置固定使用国际时间 UTC",
         "type": "int",
         "slider": {"min": -12, "max": 14, "step": 1},
-        "default": 8
+        "default": 0
       },
       "streak_daily_step": {
         "description": "连续签到每天递增额外点数",
@@ -191,6 +191,12 @@
         "description": "囤点奖励第 3 档点数",
         "type": "int",
         "default": 2000
+      },
+      "savings_bonus_reset_days": {
+        "description": "囤点档位奖励重置周期（天）",
+        "type": "int",
+        "slider": {"min": 1, "max": 365, "step": 1},
+        "default": 60
       }
     }
   },
@@ -239,6 +245,123 @@
         "hint": "默认关闭；开启后本地操作用户也可使用 /奖励。",
         "type": "bool",
         "default": false
+      }
+    }
+  },
+  "task": {
+    "description": "随机任务",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "是否启用随机任务",
+        "type": "bool",
+        "default": true
+      },
+      "normal_count": {
+        "description": "每日普通任务次数",
+        "type": "int",
+        "slider": {"min": 1, "max": 20, "step": 1},
+        "default": 5
+      },
+      "challenge_count": {
+        "description": "每日挑战任务次数",
+        "type": "int",
+        "slider": {"min": 1, "max": 20, "step": 1},
+        "default": 3
+      },
+      "challenge_min_level": {
+        "description": "挑战最低等级，默认 10 级或以上",
+        "type": "float",
+        "slider": {"min": 1, "max": 15, "step": 0.5},
+        "default": 10.0
+      },
+      "ultimate_min_level": {
+        "description": "终极最低定数",
+        "type": "float",
+        "slider": {"min": 1, "max": 15.5, "step": 0.1},
+        "default": 14.7
+      },
+      "normal_reward": {
+        "description": "普通任务奖励",
+        "type": "int",
+        "default": 20
+      },
+      "challenge_reward_s": {
+        "description": "挑战 S 奖励",
+        "type": "int",
+        "default": 30
+      },
+      "challenge_reward_ss": {
+        "description": "挑战 SS 奖励",
+        "type": "int",
+        "default": 40
+      },
+      "challenge_reward_sss": {
+        "description": "挑战 SSS/SSS+ 奖励",
+        "type": "int",
+        "default": 50
+      },
+      "ultimate_reward": {
+        "description": "终极任务奖励",
+        "type": "int",
+        "default": 30000
+      },
+      "exclude_special": {
+        "description": "排除 LUNATIC / 宴会场 / WORLD'S END 等特殊谱面",
+        "type": "bool",
+        "default": true
+      },
+      "require_photo": {
+        "description": "提交任务时是否要求图片",
+        "type": "bool",
+        "default": true
+      },
+      "auto_reset": {
+        "description": "每日 00:00 自动过期未完成任务",
+        "type": "bool",
+        "default": true
+      },
+      "auto_cleanup_history": {
+        "description": "每日自动清理已结束任务历史",
+        "type": "bool",
+        "default": true
+      },
+      "task_history_retention_days": {
+        "description": "已结束任务自动保留天数",
+        "type": "int",
+        "slider": {"min": 1, "max": 365, "step": 1},
+        "default": 30
+      },
+      "catalog_cache_ttl": {
+        "description": "曲库缓存秒数",
+        "type": "int",
+        "slider": {"min": 60, "max": 86400, "step": 60},
+        "default": 3600
+      },
+      "ongeki_source_url": {
+        "description": "音击 arcade-songs 数据源",
+        "type": "string",
+        "default": "https://dp4p6x0xfi5o9.cloudfront.net/ongeki"
+      },
+      "maimai_song_url": {
+        "description": "舞萌曲目接口",
+        "type": "string",
+        "default": "https://maimai.lxns.net/api/v0/maimai/song/list?version=25500&notes=false"
+      },
+      "chunithm_song_url": {
+        "description": "中二曲目接口",
+        "type": "string",
+        "default": "https://maimai.lxns.net/api/v0/chunithm/song/list?version=23000&notes=false"
+      },
+      "maimai_asset_url": {
+        "description": "舞萌素材地址",
+        "type": "string",
+        "default": "https://assets2.lxns.net/maimai"
+      },
+      "chunithm_asset_url": {
+        "description": "中二素材地址",
+        "type": "string",
+        "default": "https://assets2.lxns.net/chunithm"
       }
     }
   }

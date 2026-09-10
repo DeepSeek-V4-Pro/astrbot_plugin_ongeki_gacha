@@ -20,7 +20,7 @@ RARITY_COLORS: dict[str, str] = {
 
 BRAND_TEXT = "O.N.G.E.K.I"
 BRAND_COLOR = (30, 60, 110, 255)
-POWERED_TEXT = "AstrBot"
+POWERED_TEXT = ""
 POWERED_COLOR = (75, 85, 110, 255)
 
 INFO_FOOTER_HEIGHT_RATIO = 0.045
@@ -306,13 +306,14 @@ class GachaRenderer:
             font=brand_font,
             fill=BRAND_COLOR,
         )
-        powered_width = draw.textlength(POWERED_TEXT, font=powered_font)
-        draw.text(
-            (canvas_width - margin - powered_width - 8, 24),
-            POWERED_TEXT,
-            font=powered_font,
-            fill=POWERED_COLOR,
-        )
+        if POWERED_TEXT:
+            powered_width = draw.textlength(POWERED_TEXT, font=powered_font)
+            draw.text(
+                (canvas_width - margin - powered_width - 8, 24),
+                POWERED_TEXT,
+                font=powered_font,
+                fill=POWERED_COLOR,
+            )
 
         row_start_y = header_height + margin
         for row_index, row in enumerate(rows):

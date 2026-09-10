@@ -118,7 +118,7 @@ python sync_card_data.py `
   --check
 ```
 
-也可以在 AstrBot WebUI 的「素材路径」分组中，分别设置
+也可以在 WebUI 的「素材路径」分组中，分别设置
 `cards_dir` 与 `card_info_json` 为绝对路径。
 
 ### 3.3 处理本地已有的游戏/更新包

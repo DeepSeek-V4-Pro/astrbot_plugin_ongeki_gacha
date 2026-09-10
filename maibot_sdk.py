@@ -1,12 +1,12 @@
-"""MaiBot SDK 兼容层（AstrBot 专用）。
+"""MaiBot SDK 兼容层。
 
-原插件面向 MaiBot SDK 编写，这里提供一组最小兼容实现：
+提供一组最小兼容实现：
 
 - :class:`PluginConfigBase`：基于 pydantic v2 的强类型配置基类；
 - :class:`MaiBotPlugin`：承载 ``ctx`` / ``config`` 与生命周期方法的业务基类；
 - :func:`Command`：把命令元数据挂在函数对象上，由 ``main.py`` 统一分发。
 
-AstrBot 加载本插件时会优先导入本目录下的 ``maibot_sdk``，因此原插件
+插件会优先导入本目录下的 ``maibot_sdk``，因此
 ``config_model.py`` / ``plugin.py`` 可以基本保持不变。
 """
 
