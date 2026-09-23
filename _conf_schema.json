@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本标记",
         "type": "string",
-        "default": "1.2.0",
+        "default": "1.3.0",
         "invisible": true
       }
     }
@@ -23,15 +23,15 @@
     "items": {
       "cards_dir": {
         "description": "卡面 PNG 目录",
-        "hint": "默认读取插件 assets/card_data；可填写绝对路径指向外部素材。",
         "type": "string",
-        "default": "assets/card_data"
+        "default": "assets/card_data",
+        "hint": "默认读取插件 assets/card_data；可填写绝对路径指向外部素材。"
       },
       "card_info_json": {
         "description": "卡牌信息 JSON 路径",
-        "hint": "默认读取插件 assets/card_data/card_info_merged.json。",
         "type": "string",
-        "default": "assets/card_data/card_info_merged.json"
+        "default": "assets/card_data/card_info_merged.json",
+        "hint": "默认读取插件 assets/card_data/card_info_merged.json。"
       }
     }
   },
@@ -66,33 +66,46 @@
       },
       "schedule_json": {
         "description": "官方卡池排表 JSON",
-        "hint": "默认读取插件 assets/card_data/gacha_pools.json。",
         "type": "string",
-        "default": "assets/card_data/gacha_pools.json"
+        "default": "assets/card_data/gacha_pools.json",
+        "hint": "默认读取插件 assets/card_data/gacha_pools.json。"
       },
       "rotation_mode": {
         "description": "卡池选择模式",
-        "hint": "official=按几月几日复现历史官方池（忽略年份）；cycle=按间隔循环历史官方池。",
         "type": "string",
-        "default": "cycle"
+        "default": "cycle",
+        "hint": "official=按几月几日复现历史官方池（忽略年份）；cycle=按间隔循环历史官方池。"
       },
       "rotation_interval_days": {
         "description": "cycle 模式下每个池的持续天数",
         "type": "int",
-        "slider": {"min": 1, "max": 30, "step": 1},
-        "default": 15
+        "default": 15,
+        "slider": {
+          "min": 1,
+          "max": 30,
+          "step": 1
+        }
       },
       "pickup_multiplier": {
         "description": "UP 卡相对普通卡的权重倍率",
         "type": "int",
-        "slider": {"min": 1, "max": 50, "step": 1},
-        "default": 10
+        "default": 10,
+        "slider": {
+          "min": 1,
+          "max": 50,
+          "step": 1
+        }
       },
       "strict_pool_cards": {
         "description": "按池子候选列表抽取",
-        "hint": "常驻池使用 regular_pool，活动池使用排表 cards。",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "常驻池使用 regular_pool，活动池使用排表 cards。"
+      },
+      "rotation_epoch": {
+        "type": "string",
+        "default": "",
+        "description": "cycle 轮替起点 YYYY-MM-DD；留空时使用数据库首次记录且重启不重置"
       }
     }
   },
@@ -118,18 +131,22 @@
       "min_reward": {
         "description": "每日签到最低点数",
         "type": "int",
-        "default": 100
+        "default": 70
       },
       "max_reward": {
         "description": "每日签到最高点数",
         "type": "int",
-        "default": 250
+        "default": 110
       },
       "tz_offset_hours": {
-        "description": "保留字段，日期与任务重置固定使用国际时间 UTC",
+        "description": "签到、任务、周保底、好感每日次数与卡池轮替使用的 UTC 偏移小时数；中国标准时间填 8",
         "type": "int",
-        "slider": {"min": -12, "max": 14, "step": 1},
-        "default": 0
+        "default": 0,
+        "slider": {
+          "min": -12,
+          "max": 14,
+          "step": 1
+        }
       },
       "streak_daily_step": {
         "description": "连续签到每天递增额外点数",
@@ -144,7 +161,7 @@
       "streak_weekly_reward": {
         "description": "每连续签到 7 天额外奖励点数",
         "type": "int",
-        "default": 500
+        "default": 600
       },
       "streak_cycle_days": {
         "description": "每连续签到多少天发放卡池周期奖励",
@@ -154,13 +171,17 @@
       "streak_cycle_reward": {
         "description": "卡池周期奖励点数",
         "type": "int",
-        "default": 1000
+        "default": 1200
       },
       "non_gacha_checkin_probability": {
         "description": "每日签到随机获得非抽卡卡的概率（0～1）",
         "type": "float",
-        "slider": {"min": 0, "max": 1, "step": 0.01},
-        "default": 0.05
+        "default": 0.05,
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
       },
       "savings_threshold_1": {
         "description": "囤点奖励第 1 档门槛",
@@ -195,8 +216,12 @@
       "savings_bonus_reset_days": {
         "description": "囤点档位奖励重置周期（天）",
         "type": "int",
-        "slider": {"min": 1, "max": 365, "step": 1},
-        "default": 60
+        "default": 60,
+        "slider": {
+          "min": 1,
+          "max": 365,
+          "step": 1
+        }
       }
     }
   },
@@ -207,7 +232,7 @@
       "price": {
         "description": "购买月卡消耗点数",
         "type": "int",
-        "default": 1500
+        "default": 1000
       },
       "duration_days": {
         "description": "月卡有效天数",
@@ -217,7 +242,7 @@
       "daily_bonus": {
         "description": "月卡有效期每日签到额外点数",
         "type": "int",
-        "default": 100
+        "default": 80
       },
       "renew_max_remaining_days": {
         "description": "剩余不超过多少天才能续费",
@@ -242,9 +267,9 @@
       },
       "allow_local_operator": {
         "description": "是否允许本地操作用户视为管理员",
-        "hint": "默认关闭；开启后本地操作用户也可使用 /奖励。",
         "type": "bool",
-        "default": false
+        "default": false,
+        "hint": "默认关闭；开启后本地操作用户也可使用 /奖励。"
       }
     }
   },
@@ -260,56 +285,67 @@
       "normal_count": {
         "description": "每日普通任务次数",
         "type": "int",
-        "slider": {"min": 1, "max": 20, "step": 1},
-        "default": 5
+        "default": 3,
+        "slider": {
+          "min": 1,
+          "max": 20,
+          "step": 1
+        }
       },
       "challenge_count": {
         "description": "每日挑战任务次数",
         "type": "int",
-        "slider": {"min": 1, "max": 20, "step": 1},
-        "default": 3
+        "default": 2,
+        "slider": {
+          "min": 1,
+          "max": 20,
+          "step": 1
+        }
       },
       "challenge_min_level": {
         "description": "挑战最低等级，默认 10 级或以上",
         "type": "float",
-        "slider": {"min": 1, "max": 15, "step": 0.5},
-        "default": 10.0
+        "default": 10.0,
+        "slider": {
+          "min": 1,
+          "max": 15,
+          "step": 0.5
+        }
       },
       "ultimate_min_level": {
         "description": "终极最低定数",
         "type": "float",
-        "slider": {"min": 1, "max": 15.5, "step": 0.1},
-        "default": 14.7
+        "default": 14.7,
+        "slider": {
+          "min": 1,
+          "max": 15.5,
+          "step": 0.1
+        }
       },
       "normal_reward": {
         "description": "普通任务奖励",
         "type": "int",
-        "default": 20
+        "default": 35
       },
       "challenge_reward_s": {
         "description": "挑战 S 奖励",
         "type": "int",
-        "default": 30
+        "default": 60
       },
       "challenge_reward_ss": {
         "description": "挑战 SS 奖励",
         "type": "int",
-        "default": 40
+        "default": 80
       },
       "challenge_reward_sss": {
         "description": "挑战 SSS/SSS+ 奖励",
         "type": "int",
-        "default": 50
+        "default": 100
       },
       "ultimate_reward": {
         "description": "终极任务奖励",
         "type": "int",
         "default": 30000
-      },
-      "exclude_special": {
-        "description": "排除 LUNATIC / 宴会场 / WORLD'S END 等特殊谱面",
-        "type": "bool",
-        "default": true
       },
       "require_photo": {
         "description": "提交任务时是否要求图片",
@@ -329,14 +365,22 @@
       "task_history_retention_days": {
         "description": "已结束任务自动保留天数",
         "type": "int",
-        "slider": {"min": 1, "max": 365, "step": 1},
-        "default": 30
+        "default": 30,
+        "slider": {
+          "min": 1,
+          "max": 365,
+          "step": 1
+        }
       },
       "catalog_cache_ttl": {
         "description": "曲库缓存秒数",
         "type": "int",
-        "slider": {"min": 60, "max": 86400, "step": 60},
-        "default": 3600
+        "default": 3600,
+        "slider": {
+          "min": 60,
+          "max": 86400,
+          "step": 60
+        }
       },
       "ongeki_source_url": {
         "description": "音击 arcade-songs 数据源",
@@ -362,6 +406,272 @@
         "description": "中二素材地址",
         "type": "string",
         "default": "https://assets2.lxns.net/chunithm"
+      },
+      "advanced_count": {
+        "type": "int",
+        "default": 1,
+        "description": "每日高级挑战任务次数"
+      },
+      "advanced_min_level": {
+        "type": "float",
+        "default": 12.7,
+        "description": "高级挑战最低定数"
+      },
+      "advanced_reward_s": {
+        "type": "int",
+        "default": 105,
+        "description": "高级挑战 S 奖励"
+      },
+      "advanced_reward_ss": {
+        "type": "int",
+        "default": 115,
+        "description": "高级挑战 SS 奖励"
+      },
+      "advanced_reward_sss": {
+        "type": "int",
+        "default": 125,
+        "description": "高级挑战 SSS/SSS+ 奖励"
+      }
+    }
+  },
+  "growth": {
+    "description": "角色养成",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用全部17名主角色好感与主动解花；基础N卡默认1星",
+        "type": "bool",
+        "default": true
+      },
+      "voice_enabled": {
+        "description": "启用已通过自动校验的QQ角色语音；全部素材已自动验收，可手动关闭",
+        "type": "bool",
+        "default": true
+      },
+      "automatic_voice_enabled": {
+        "description": "语音启用后，成功送礼或好感升级自动回应；每笔最多一条",
+        "type": "bool",
+        "default": true
+      },
+      "companion_points": {
+        "type": "int",
+        "default": 300,
+        "description": "每日陪伴获得的好感"
+      },
+      "gift_small_points": {
+        "type": "int",
+        "default": 300,
+        "description": "小礼物好感"
+      },
+      "gift_medium_points": {
+        "type": "int",
+        "default": 1000,
+        "description": "中礼物好感"
+      },
+      "gift_large_points": {
+        "type": "int",
+        "default": 10000,
+        "description": "大礼物好感"
+      },
+      "monthly_event_days": {
+        "type": "int",
+        "default": 7,
+        "description": "每月签到活动天数"
+      },
+      "monthly_event_small_gift_days": {
+        "type": "list",
+        "default": [
+          1,
+          3
+        ],
+        "description": "活动周发放小礼物的日期"
+      },
+      "monthly_event_medium_gift_days": {
+        "type": "list",
+        "default": [
+          5
+        ],
+        "description": "活动周发放中礼物的日期"
+      },
+      "monthly_event_large_gift_days": {
+        "type": "list",
+        "default": [
+          7
+        ],
+        "description": "活动周发放大礼物的日期"
+      },
+      "monthly_event_fragments": {
+        "type": "int",
+        "default": 5,
+        "description": "活动周其余日期发放的花之碎片"
+      },
+      "task_medium_gifts_daily_cap": {
+        "type": "int",
+        "default": 1,
+        "description": "任务中礼物每日上限"
+      },
+      "task_medium_gift_sources": {
+        "type": "list",
+        "default": [
+          "challenge",
+          "advanced"
+        ],
+        "description": "可发中礼物的任务类型"
+      },
+      "task_fragments_normal": {
+        "type": "int",
+        "default": 1,
+        "description": "普通任务审核碎片"
+      },
+      "task_fragments_challenge": {
+        "type": "int",
+        "default": 1,
+        "description": "挑战任务审核碎片"
+      },
+      "task_fragments_advanced": {
+        "type": "int",
+        "default": 1,
+        "description": "高级挑战审核碎片"
+      },
+      "task_fragments_ultimate": {
+        "type": "int",
+        "default": 0,
+        "description": "终极任务审核碎片"
+      },
+      "task_fragments_daily_cap": {
+        "type": "int",
+        "default": 2,
+        "description": "任务碎片每日上限"
+      },
+      "gift_purchase_small_price": {
+        "type": "int",
+        "default": 150,
+        "description": "小礼物点数价格"
+      },
+      "gift_purchase_small_weekly_cap": {
+        "type": "int",
+        "default": 10,
+        "description": "小礼物每周购买上限"
+      },
+      "gift_purchase_medium_price": {
+        "type": "int",
+        "default": 500,
+        "description": "中礼物点数价格"
+      },
+      "gift_purchase_medium_weekly_cap": {
+        "type": "int",
+        "default": 3,
+        "description": "中礼物每周购买上限"
+      },
+      "bloom_items": {
+        "type": "list",
+        "default": [
+          "bloom_ticket",
+          "flower_fragment"
+        ],
+        "description": "解花/超解花消耗的物品ID"
+      },
+      "bloom_levels": {
+        "type": "list",
+        "default": [
+          100,
+          200
+        ],
+        "description": "解花/超解花好感等级"
+      },
+      "bloom_costs": {
+        "type": "list",
+        "default": [
+          1,
+          90
+        ],
+        "description": "解花/超解花物品数量"
+      },
+      "bloom_ticket_source_kind": {
+        "type": "string",
+        "default": "advanced",
+        "description": "解花券来源任务类型"
+      },
+      "bloom_ticket_source_min_level": {
+        "type": "float",
+        "default": 13.5,
+        "description": "解花券来源目标最低定数"
+      },
+      "bloom_ticket_source_grade": {
+        "type": "string",
+        "default": "SSS",
+        "description": "解花券来源最低评级"
+      },
+      "bloom_ticket_cooldown_days": {
+        "type": "int",
+        "default": 15,
+        "description": "解花券获取冷却天数"
+      },
+      "ultimate_large_gifts_lifetime_cap": {
+        "type": "int",
+        "default": 0,
+        "description": "终极任务大礼物终身上限"
+      },
+      "voice_cooldown_seconds": {
+        "type": "int",
+        "default": 10,
+        "description": "语音点播冷却秒数"
+      },
+      "voice_minute_limit": {
+        "type": "int",
+        "default": 5,
+        "description": "语音每分钟次数上限"
+      },
+      "voice_request_ttl_seconds": {
+        "type": "int",
+        "default": 600,
+        "description": "语音请求去重保留秒数"
+      },
+      "voice_inflight_limit": {
+        "type": "int",
+        "default": 10,
+        "description": "单会话并发送语音上限"
+      },
+      "voice_send_timeout_seconds": {
+        "type": "int",
+        "default": 30,
+        "description": "单条语音发送超时秒数"
+      },
+      "rules_overrides": {
+        "type": "dict",
+        "default": {},
+        "description": "高级覆盖 rules_draft.json；留空表示使用上方具名配置与随包规则"
+      }
+    }
+  },
+  "ui": {
+    "description": "ui",
+    "type": "object",
+    "items": {
+      "render_cache_ttl_seconds": {
+        "type": "int",
+        "default": 86400,
+        "description": "渲染临时文件保留秒数"
+      },
+      "pool_image_cache_ttl_seconds": {
+        "type": "int",
+        "default": 604800,
+        "description": "卡池公告图缓存秒数"
+      },
+      "max_pool_image_bytes": {
+        "type": "int",
+        "default": 8388608,
+        "description": "卡池公告图单张最大字节数"
+      },
+      "short_reply_max_lines": {
+        "type": "int",
+        "default": 10,
+        "description": "短回复直接发文字的最大行数"
+      },
+      "short_reply_max_chars": {
+        "type": "int",
+        "default": 700,
+        "description": "短回复直接发文字的最大字符数"
       }
     }
   }

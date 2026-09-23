@@ -66,6 +66,52 @@ class MaiBotPlugin:
         self.ctx: Any = None
         self.config: Any = None
 
+    def _set_context(self, ctx: Any) -> None:
+        """兼容 MaiBot 生命周期：注入 ctx。"""
+        self.ctx = ctx
+
+    def build_default_config(self) -> dict:
+        """返回 config_model 的默认配置字典。"""
+        model = self.config_model or PluginConfigBase
+        return model().model_dump()
+
+    def set_plugin_config(self, config: dict) -> None:
+        """按 config_model 解析并保存插件配置。"""
+        model = self.config_model or PluginConfigBase
+        self.config = model(**dict(config)) if isinstance(config, dict) else config
+
+    def get_components(self) -> list[dict]:
+        """把 ``@Command`` 标记的方法收集成 MaiBot 风格的组件列表。"""
+        components: list[dict] = []
+        seen: set[str] = set()
+        for cls in type(self).__mro__:
+            for value in vars(cls).values():
+                meta = getattr(value, "_mai_command", None)
+                if not isinstance(meta, dict) or not meta.get("pattern"):
+                    continue
+                name = str(meta.get("name") or getattr(value, "__name__", ""))
+                if name in seen:
+                    continue
+                seen.add(name)
+                raw_pattern = meta.get("pattern")
+                components.append(
+                    {
+                        "type": "COMMAND",
+                        "metadata": {
+                            "name": name,
+                            "description": str(meta.get("description") or ""),
+                            "command_pattern": (
+                                raw_pattern.pattern
+                                if hasattr(raw_pattern, "pattern")
+                                else str(raw_pattern or "")
+                            ),
+                            "aliases": list(meta.get("aliases") or []),
+                            "handler_name": getattr(value, "__name__", name),
+                        },
+                    }
+                )
+        return components
+
     async def on_load(self) -> None:
         """插件加载时调用。"""
 

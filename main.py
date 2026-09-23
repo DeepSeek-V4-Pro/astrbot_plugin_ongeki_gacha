@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import contextvars
+import base64
 import os
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +34,49 @@ _current_event: contextvars.ContextVar[Optional[AstrMessageEvent]] = (
 # 用于估计正则"字面前缀"长度，字面前缀越长 = 命令越具体，优先匹配。
 _OPERATOR = re.compile(r"(\\.|\(|\)|\[|\]|\.\+?|\*|\?|\{|\}|\||\^|\$)")
 
+# 各平台在"无法给出真实 @ 目标"时填入的占位 id，不参与目标解析。
+_AT_PLACEHOLDER_IDS = {
+    "all",
+    "qq_official",
+    "qq_official_webhook",
+    "unknown_selfid",
+}
+
+
+def _mention_identity(mention: object) -> tuple[str, bool]:
+    """从平台 mention 对象/dict 中取出 (目标 id, 是否是机器人自己)。
+
+    QQ 官方机器人群消息的 mention 只有 ``member_openid``，私聊只有
+    ``user_openid``；aiocqhttp 等平台用 ``qq``/``user_id``。机器人自己的
+    mention 会带 ``is_you``/``is_self`` 标记，必须排除，否则会被当成
+    奖励目标。
+    """
+    if isinstance(mention, dict):
+        getter = mention.get
+    else:
+        getter = lambda key, default=None: getattr(mention, key, default)
+    target = ""
+    for key in (
+        "id",
+        "user_id",
+        "qq",
+        "openid",
+        "member_openid",
+        "user_openid",
+        "target_user_id",
+    ):
+        raw = getter(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text:
+            target = text
+            break
+    is_you = bool(
+        getter("is_you") or getter("is_self") or getter("is_bot_self")
+    )
+    return target, is_you
+
 
 def _literal_prefix_len(pattern: str) -> int:
     match = _OPERATOR.search(pattern.lstrip("^"))
@@ -44,11 +89,12 @@ class AstrBotSend:
     def __init__(self, star: "OngekiGachaStar") -> None:
         self._star = star
 
-    async def text(self, text: str, stream_id: str = "") -> None:
+    async def text(self, text: str, stream_id: str = "") -> dict:
         del stream_id
-        await self._star._send_chain(MessageChain().message(text))
+        sent = await self._star._send_chain(MessageChain().message(text))
+        return {"success": sent}
 
-    async def image(self, image: str, stream_id: str = "") -> None:
+    async def image(self, image: str, stream_id: str = "") -> dict:
         """发送图片；参数为 base64 图片、http 链接或本地路径。"""
         del stream_id
         if image.startswith(("http://", "https://")):
@@ -57,15 +103,59 @@ class AstrBotSend:
             chain = MessageChain().file_image(image)
         else:
             chain = MessageChain().base64_image(image)
-        await self._star._send_chain(chain)
+        sent = await self._star._send_chain(chain)
+        return {"success": sent}
 
-    async def forward(self, nodes: list[dict], stream_id: str = "") -> None:
+    async def custom(self, custom_type: str, data: str, stream_id: str = "") -> dict:
+        """custom 能力：目前用于发送语音（voice）。
+
+        AstrBot 的 ``Record`` 组件会按平台转换格式：QQ 官方机器人需要
+        Tencent SILK，由框架的 MediaResolver 自动转换（需要 ``silk-python``）；
+        aiocqhttp 等适配器直接发送本地音频文件。转换或发送失败时只记录日志，
+        由上层按“语音发送失败”处理，不回滚养成结果。
+
+        返回 ``{"success": bool}``：命令层用它判断是否需要补发文字回执，
+        返回 None 会被当成发送失败而重复发一遍内容。
+        """
+        del stream_id
+        kind = str(custom_type or "").strip().lower()
+        if kind != "voice":
+            logger.warning("未实现的 custom 类型: %s", custom_type)
+            return {"success": False}
+        raw = str(data or "")
+        if raw.startswith("base64"):
+            raw = raw.split(",", 1)[-1]
+        try:
+            payload = base64.b64decode(raw)
+        except Exception:
+            logger.warning("语音数据解析失败，未发送")
+            return {"success": False}
+        if not payload:
+            logger.warning("语音数据为空，未发送")
+            return {"success": False}
+        runtime = self._star.data_dir / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        path = runtime / f"voice_{int(time.time() * 1000)}.wav"
+        try:
+            path.write_bytes(payload)
+        except OSError:
+            logger.exception("语音临时文件写入失败")
+            return {"success": False}
+        try:
+            chain = MessageChain(chain=[Comp.Record.fromFileSystem(str(path))])
+        except Exception:
+            logger.exception("语音组件构造失败")
+            return {"success": False}
+        sent = await self._star._send_chain(chain)
+        return {"success": sent}
+
+    async def forward(self, nodes: list[dict], stream_id: str = "") -> dict:
         """发送合并转发；不支持合并转发的平台降级为结构化文本。"""
         del stream_id
         event = self._star.current_event()
         if event is None:
             logger.warning("forward 调用时缺少当前事件，消息被丢弃")
-            return
+            return {"success": False}
 
         platform = event.get_platform_name()
         if platform == "aiocqhttp":
@@ -113,7 +203,8 @@ class AstrBotSend:
                 body = "\n".join(p for p in parts if p)
                 lines.append(f"【{nickname}】\n{body}" if nickname else body)
             chain = MessageChain().message("\n\n".join(lines))
-        await self._star._send_chain(chain)
+        sent = await self._star._send_chain(chain)
+        return {"success": sent}
 
 
 class AstrBotPaths:
@@ -241,7 +332,7 @@ class OngekiGachaStar(Star):
                     continue
                 qq = getattr(component, "qq", "")
                 qq = str(qq or "").strip()
-                if qq and qq not in {"all", "qq_official"} and qq != self_id:
+                if qq and qq not in _AT_PLACEHOLDER_IDS and qq != self_id:
                     result.append(
                         {
                             "type": "at",
@@ -254,14 +345,12 @@ class OngekiGachaStar(Star):
             raw_message = getattr(event.message_obj, "raw_message", None)
             mentions = getattr(raw_message, "mentions", None) or []
             for mention in mentions:
-                if getattr(mention, "is_you", False):
+                mention_id, is_you = _mention_identity(mention)
+                if is_you:
                     continue
-                mention_id = str(
-                    getattr(mention, "id", None)
-                    or getattr(mention, "user_id", None)
-                    or ""
-                ).strip()
                 if not mention_id or mention_id == self_id:
+                    continue
+                if mention_id in _AT_PLACEHOLDER_IDS:
                     continue
                 result.append(
                     {
@@ -307,15 +396,114 @@ class OngekiGachaStar(Star):
             logger.debug("读取 AstrBot 图片消息组件失败", exc_info=True)
         return result
 
-    async def _send_chain(self, chain: MessageChain) -> None:
+    async def _send_chain(self, chain: MessageChain) -> bool:
+        """发送消息链；成功返回 True，失败只记日志并返回 False。"""
         event = self.current_event()
         if event is None:
             logger.warning("缺少当前事件，无法发送消息")
-            return
+            return False
         try:
             await event.send(chain)
+            return True
         except Exception:
             logger.exception("发送消息失败")
+            return False
+
+    @staticmethod
+    def _describe_at_sources(event: AstrMessageEvent) -> str:
+        """诊断用：把消息链与平台 mention 原样打印，便于确认 @ 目标来自哪里。"""
+        parts: list[str] = []
+        try:
+            for component in event.get_messages() or []:
+                name = type(component).__name__
+                qq = getattr(component, "qq", None)
+                parts.append(f"{name}(qq={qq!r})" if qq is not None else name)
+        except Exception:
+            parts.append("<chain 读取失败>")
+        mentions_desc = "无"
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        raw_mentions = getattr(raw_message, "mentions", None)
+        if raw_mentions is not None:
+            items = []
+            for mention in raw_mentions:
+                if isinstance(mention, dict):
+                    items.append(repr(mention))
+                else:
+                    fields = getattr(mention, "__dict__", None)
+                    items.append(
+                        f"{type(mention).__name__}{fields!r}"
+                        if fields
+                        else repr(mention)
+                    )
+            mentions_desc = f"{type(raw_message).__name__}.mentions={items}"
+        raw_data = getattr(raw_message, "raw_data", None)
+        if isinstance(raw_data, dict):
+            payload = {
+                key: value
+                for key, value in raw_data.items()
+                if key in {"mentions", "content", "message_type", "msg_elements"}
+            }
+            mentions_desc += f" raw_data={str(payload)[:600]}"
+        return (
+            f"message_str={event.message_str!r} chain=[{' '.join(parts)}] "
+            f"self_id={event.get_self_id()!r} {mentions_desc}"
+        )
+
+    @staticmethod
+    def _event_message_id(event: AstrMessageEvent) -> str:
+        """取平台消息 ID 用于养成/语音交易的幂等键。
+
+        AstrBot 的事件对象没有统一的取值方法，这里按常见字段兜底；平台确实
+        没给消息 ID 时用会话 + 时间戳合成一个，保证交易能执行（否则所有养成
+        指令都会因为「缺少消息ID」而失败）。
+        """
+        candidates = (
+            getattr(getattr(event, "message_obj", None), "message_id", None),
+            getattr(event, "message_id", None),
+            getattr(
+                getattr(event, "message_obj", None),
+                "raw_message",
+                None,
+            )
+            and getattr(
+                getattr(getattr(event, "message_obj", None), "raw_message", None),
+                "id",
+                None,
+            ),
+        )
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return f"{event.unified_msg_origin or ''}:{time.time_ns()}"
+
+    @classmethod
+    def _handler_kwargs(
+        cls,
+        event: AstrMessageEvent,
+        text: str,
+        groups: dict,
+        components: list[dict],
+    ) -> dict:
+        """组装命令层 kwargs；养成/语音交易的幂等键依赖 message_id。"""
+        message_id = cls._event_message_id(event)
+        platform = event.get_platform_name()
+        return {
+            "stream_id": event.unified_msg_origin,
+            "matched_groups": groups,
+            "user_id": event.get_sender_id(),
+            "text": text,
+            "message_id": message_id,
+            "platform": platform,
+            "message": {
+                "message_id": message_id,
+                "platform": platform,
+                "message_info": {
+                    "user_info": {"user_id": event.get_sender_id()}
+                },
+                "raw_message": components,
+            },
+        }
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=5)
     async def on_message(self, event: AstrMessageEvent) -> None:
@@ -328,6 +516,10 @@ class OngekiGachaStar(Star):
         # 剥掉，导致 "/签到" 变成 "签到"。命令正则统一以 "/" 开头，这里补回。
         if not text.startswith("/"):
             text = "/" + text
+        at_components = self._at_components(event)
+        if text.startswith(("/奖励", "/终极完成")) and not at_components:
+            # 目标类命令没解析到 @ 目标时打印原始来源，便于确认平台是否下发
+            logger.info("命令诊断（无 @ 目标）：%s", self._describe_at_sources(event))
 
         for cmd in self._commands:
             match = cmd["meta"]["pattern"].match(text)
@@ -343,19 +535,12 @@ class OngekiGachaStar(Star):
             token = _current_event.set(event)
             try:
                 await cmd["handler"](
-                    stream_id=event.unified_msg_origin,
-                    matched_groups=match.groupdict() if match else {},
-                    user_id=event.get_sender_id(),
-                    text=text,
-                    message={
-                        "message_info": {
-                            "user_info": {"user_id": event.get_sender_id()}
-                        },
-                        "raw_message": (
-                            self._at_components(event)
-                            + self._image_components(event)
-                        ),
-                    },
+                    **self._handler_kwargs(
+                        event,
+                        text,
+                        match.groupdict() if match else {},
+                        at_components + self._image_components(event),
+                    )
                 )
             except Exception:
                 logger.exception("命令 %s 处理失败", cmd["meta"]["name"])

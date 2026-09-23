@@ -30,11 +30,13 @@ CARD_FILL = (255, 255, 255, 236)
 SECTION_PATTERN = re.compile(r"^【.+】$")
 
 FONT_CANDIDATES = (
+    Path(__file__).parent / "assets/fonts/NotoSansCJKsc-Regular.otf",
     Path("C:/Windows/Fonts/msyh.ttc"),
     Path("C:/Windows/Fonts/simhei.ttf"),
     Path("C:/Windows/Fonts/msyhbd.ttc"),
 )
 BOLD_FONT_CANDIDATES = (
+    Path(__file__).parent / "assets/fonts/NotoSansCJKsc-Bold.otf",
     Path("C:/Windows/Fonts/msyhbd.ttc"),
     Path("C:/Windows/Fonts/msyh.ttc"),
     Path("C:/Windows/Fonts/simhei.ttf"),
@@ -87,19 +89,12 @@ def _wrap_text(
             lines.append(current.rstrip())
             current = ""
             continue
-        if draw.textlength(token, font=font) > max_width:
-            for char in token:
-                candidate = f"{current}{char}"
-                if current and draw.textlength(candidate, font=font) > max_width:
-                    lines.append(current.rstrip())
-                    current = char
-                else:
-                    current = candidate
-            continue
         candidate = f"{current}{token}"
         if current and draw.textlength(candidate, font=font) > max_width:
             lines.append(current.rstrip())
-            current = "" if token.isspace() else token
+            current = token.lstrip() if token.isspace() else token
+            if token.isspace():
+                current = ""
         else:
             current = candidate
     if current:

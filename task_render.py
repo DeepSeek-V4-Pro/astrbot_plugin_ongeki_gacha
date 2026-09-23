@@ -19,12 +19,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 KIND_COLORS: dict[str, tuple[int, int, int]] = {
     "normal": (122, 196, 174),
     "challenge": (116, 158, 232),
+    "advanced": (232, 150, 96),
     "ultimate": (171, 144, 226),
 }
 
 KIND_LABELS: dict[str, str] = {
     "normal": "普通任务",
     "challenge": "挑战任务",
+    "advanced": "高级挑战",
     "ultimate": "终极任务",
 }
 
@@ -424,15 +426,9 @@ def render_task_card(data: TaskCardData, output_path: Path, size: tuple[int, int
     # 接取人
     if data.user_id:
         user_font = _font(18)
-        user_text = _fit_text(
-            draw,
-            f"接取人：{data.user_id}",
-            user_font,
-            250,
-        )
         draw.text(
             (card[0] + 42, card[3] - 46),
-            user_text,
+            f"接取人：{data.user_id}",
             font=user_font,
             fill=TEXT_MUTED,
         )

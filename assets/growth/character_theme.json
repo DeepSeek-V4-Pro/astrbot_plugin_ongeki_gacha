@@ -1,0 +1,107 @@
+{
+  "version": "growth-theme-v1",
+  "characters": {
+    "1000": {
+      "primary": "#FF999E",
+      "light": "#FFE0E2",
+      "tint": "#FFC2C5",
+      "deep": "#825864"
+    },
+    "1001": {
+      "primary": "#FFEA73",
+      "light": "#FFF9D5",
+      "tint": "#FFF2AB",
+      "deep": "#827C50"
+    },
+    "1002": {
+      "primary": "#4791FF",
+      "light": "#C8DEFF",
+      "tint": "#91BDFF",
+      "deep": "#2F548F"
+    },
+    "1003": {
+      "primary": "#8D5CE0",
+      "light": "#DDCEF6",
+      "tint": "#BB9DEC",
+      "deep": "#4F3C81"
+    },
+    "1004": {
+      "primary": "#FF71D9",
+      "light": "#FFD4F4",
+      "tint": "#FFAAE8",
+      "deep": "#82467E"
+    },
+    "1005": {
+      "primary": "#50BFA3",
+      "light": "#CAECE3",
+      "tint": "#96D9C8",
+      "deep": "#336966"
+    },
+    "1006": {
+      "primary": "#D169ED",
+      "light": "#F1D2FA",
+      "tint": "#E3A5F4",
+      "deep": "#6D4287"
+    },
+    "1007": {
+      "primary": "#FFF2F4",
+      "light": "#FFFBFC",
+      "tint": "#FFF7F8",
+      "deep": "#82808A"
+    },
+    "1008": {
+      "primary": "#484878",
+      "light": "#C8C8D6",
+      "tint": "#9191AE",
+      "deep": "#303353"
+    },
+    "1009": {
+      "primary": "#CED1D9",
+      "light": "#F0F1F4",
+      "tint": "#E2E3E8",
+      "deep": "#6C717E"
+    },
+    "1010": {
+      "primary": "#94F453",
+      "light": "#DFFCCB",
+      "tint": "#BFF898",
+      "deep": "#528042"
+    },
+    "1011": {
+      "primary": "#CC0000",
+      "light": "#F0B2B2",
+      "tint": "#E06666",
+      "deep": "#6B131D"
+    },
+    "1012": {
+      "primary": "#BAF4FF",
+      "light": "#EAFCFF",
+      "tint": "#D6F8FF",
+      "deep": "#63808F"
+    },
+    "1013": {
+      "primary": "#FFBAD4",
+      "light": "#FFEAF2",
+      "tint": "#FFD6E5",
+      "deep": "#82667C"
+    },
+    "1014": {
+      "primary": "#FFD427",
+      "light": "#FFF2BE",
+      "tint": "#FFE57D",
+      "deep": "#82722E"
+    },
+    "1015": {
+      "primary": "#4F9BAB",
+      "light": "#CAE1E6",
+      "tint": "#95C3CD",
+      "deep": "#33586A"
+    },
+    "1016": {
+      "primary": "#604AA3",
+      "light": "#CFC9E3",
+      "tint": "#A092C8",
+      "deep": "#3B3466"
+    }
+  }
+}

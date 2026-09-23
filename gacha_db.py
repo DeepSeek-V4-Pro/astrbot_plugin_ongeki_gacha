@@ -1,8 +1,9 @@
-"""SQLite 持久化：玩家、签到、库存与抽卡日志。"""
+"""SQLite 持久化：用户、签到、库存与抽卡日志。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -12,7 +13,11 @@ import random
 import sqlite3
 import threading
 
-from .gacha_core import derive_growth
+from .gacha_core import CardCollection
+from .growth_core import duplicate_fragments
+from .growth_migration import change_item, migrate, MIGRATION_ID, ITEM_MIGRATION_ID, CURVE_MIGRATION_ID
+from .starter_cards import STARTER_CARDS, STARTER_CARD_IDS
+from .growth_core import CURVE_VERSION
 
 WEEKLY_RESET_DAY = 3  # 0=Monday, 3=Thursday
 WEEKLY_RESET_HOUR = 0
@@ -24,7 +29,7 @@ CHECKIN_LUCKY_BONUS = 9999
 
 @dataclass(frozen=True)
 class PlayerState:
-    """玩家当前状态。"""
+    """用户当前状态。"""
 
     qq_id: str
     points: int
@@ -47,6 +52,10 @@ class InventoryEntry:
     copies: int
     is_kaika: bool
     is_cho_kaika: bool
+    bloom_stage: int = 0
+    kaika_at: str | None = None
+    cho_kaika_at: str | None = None
+    growth_origin: str = "new"
 
 
 @dataclass(frozen=True)
@@ -58,6 +67,7 @@ class DrawCommitment:
     copies: int
     is_kaika: bool
     is_cho_kaika: bool
+    fragments: int = 0
 
 
 @dataclass(frozen=True)
@@ -91,9 +101,14 @@ class CheckinReceipt:
     cycle_reward: int = 0
     monthly_reward: int = 0
     non_gacha_card_id: int | None = None
+    non_gacha_is_new: bool = False
     non_gacha_copies: int = 0
     non_gacha_is_kaika: bool = False
     non_gacha_is_cho_kaika: bool = False
+    growth_fragments: int = 0
+    small_gifts: int = 0
+    medium_gifts: int = 0
+    large_gifts: int = 0
 
 
 @dataclass(frozen=True)
@@ -165,6 +180,11 @@ class TaskReviewReceipt:
     points: int = 0
     grade: str = ""
     error: str = ""
+    growth_fragments: int = 0
+    medium_gifts: int = 0
+    large_gifts: int = 0
+    bloom_tickets: int = 0
+    cooldown_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -213,6 +233,9 @@ class SelectClaimReceipt:
     copies: int
     is_new: bool
     error: str = ""
+    fragments: int = 0
+    is_kaika: bool = False
+    is_cho_kaika: bool = False
 
 
 class GachaDatabase:
@@ -223,6 +246,9 @@ class GachaDatabase:
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
         self._random = random.SystemRandom()
+        self._growth_ready = False
+        self._growth_enabled = False
+        self._growth_rules: dict[str, Any] = {}
 
     def open(self) -> None:
         """创建目录、连接并初始化表结构。"""
@@ -307,6 +333,19 @@ class GachaDatabase:
                 FOREIGN KEY(target_id) REFERENCES players(qq_id)
             );
 
+            CREATE TABLE IF NOT EXISTS identity_aliases (
+                alias TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS identity_links (
+                alias TEXT PRIMARY KEY,
+                canonical TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 qq_id               TEXT NOT NULL,
@@ -375,18 +414,85 @@ class GachaDatabase:
                 FOREIGN KEY(qq_id) REFERENCES players(qq_id)
             );
 
+            CREATE TABLE IF NOT EXISTS ultimate_completed_charts (
+                qq_id            TEXT NOT NULL,
+                game             TEXT NOT NULL,
+                song_id          TEXT NOT NULL,
+                difficulty_index INTEGER NOT NULL DEFAULT -1,
+                completed_at     TEXT NOT NULL,
+                PRIMARY KEY(qq_id, game, song_id, difficulty_index),
+                FOREIGN KEY(qq_id) REFERENCES players(qq_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS timed_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                qq_id       TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                event_key   TEXT NOT NULL DEFAULT '',
+                occurred_at REAL NOT NULL,
+                payload     TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS pending_card_reveals (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                qq_id         TEXT NOT NULL,
+                card_id       INTEGER NOT NULL,
+                before_copies INTEGER NOT NULL DEFAULT 0,
+                after_copies  INTEGER NOT NULL DEFAULT 0,
+                is_kaika     INTEGER NOT NULL DEFAULT 0,
+                is_cho_kaika INTEGER NOT NULL DEFAULT 0,
+                created_at    TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS player_cooldowns (
+                qq_id     TEXT NOT NULL,
+                key       TEXT NOT NULL,
+                last_at   TEXT NOT NULL,
+                PRIMARY KEY(qq_id, key)
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_timed_events_key
+                ON timed_events(kind, event_key) WHERE event_key <> '';
+            CREATE INDEX IF NOT EXISTS idx_timed_events_lookup
+                ON timed_events(qq_id, kind, occurred_at);
+            CREATE INDEX IF NOT EXISTS idx_pending_card_reveals_lookup
+                ON pending_card_reveals(qq_id, id);
+
             CREATE TABLE IF NOT EXISTS app_settings (
                 key         TEXT PRIMARY KEY,
                 value       TEXT NOT NULL DEFAULT '',
                 updated_at  TEXT NOT NULL
             );
-
-            CREATE TABLE IF NOT EXISTS identity_aliases (
-                alias        TEXT PRIMARY KEY,
-                user_id      TEXT NOT NULL,
-                created_at   TEXT NOT NULL,
-                updated_at   TEXT NOT NULL
-            );
+            """
+        )
+        # 旧版按“曲目”记终极完成。优先从历史任务恢复当时的 difficulty_index，
+        # 使同曲其他难度仍可抽取；只有恢复不到具体难度时才保留整曲锁（-1）。
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO ultimate_completed_charts(
+                qq_id, game, song_id, difficulty_index, completed_at
+            )
+            SELECT qq_id, game, song_id, COALESCE(difficulty_index, -1),
+                   COALESCE(reviewed_at, created_at)
+            FROM tasks
+            WHERE task_kind = 'ultimate'
+              AND status = 'approved'
+              AND awarded = 1
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO ultimate_completed_charts(
+                qq_id, game, song_id, difficulty_index, completed_at
+            )
+            SELECT s.qq_id, s.game, s.song_id, -1, s.completed_at
+            FROM ultimate_completed_songs AS s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM ultimate_completed_charts AS c
+                WHERE c.qq_id = s.qq_id
+                  AND c.game = s.game
+                  AND c.song_id = s.song_id
+            )
             """
         )
         existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(players)").fetchall()}
@@ -435,7 +541,130 @@ class GachaDatabase:
                 "ALTER TABLE players "
                 "ADD COLUMN savings_bonus_start_date TEXT NOT NULL DEFAULT ''"
             )
+        reveal_columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_card_reveals)")}
+        if "is_kaika" not in reveal_columns:
+            conn.execute("ALTER TABLE pending_card_reveals ADD COLUMN is_kaika INTEGER NOT NULL DEFAULT 0")
+        if "is_cho_kaika" not in reveal_columns:
+            conn.execute("ALTER TABLE pending_card_reveals ADD COLUMN is_cho_kaika INTEGER NOT NULL DEFAULT 0")
         self._conn = conn
+
+    def initialize_growth(self, cards: CardCollection, *, enabled: bool = False, rules: dict | None = None) -> dict:
+        """启动时停写备份并迁移；关闭产出也不恢复按张数自动解花。"""
+        with self._lock:
+            conn = self._conn
+            if conn is None:
+                raise RuntimeError("数据库尚未打开")
+            exists = conn.execute("SELECT name FROM sqlite_master WHERE name='schema_migrations'").fetchone()
+            applied = {row[0] for row in conn.execute("SELECT migration_id FROM schema_migrations")} if exists else set()
+            migrated = {MIGRATION_ID, ITEM_MIGRATION_ID, CURVE_MIGRATION_ID} <= applied
+            backup_path = None
+            if not migrated and conn.execute("SELECT 1 FROM players LIMIT 1").fetchone():
+                from uuid import uuid4
+                backup_path = self._db_path.with_name(f"{self._db_path.stem}.before-growth-{uuid4().hex}.db")
+                with backup_path.open("xb"):
+                    pass
+                backup = sqlite3.connect(backup_path)
+                try:
+                    conn.backup(backup)
+                finally:
+                    backup.close()
+            result = migrate(conn, {c.id: c.rarity for c in cards.cards})
+            self._growth_ready = True
+            self._growth_enabled = enabled
+            self._growth_rules = rules or {}
+            self._starter_cards = {cid:card_id for cid,card_id in STARTER_CARDS.items() if card_id in cards.by_id}
+            if enabled:
+                conn.execute('BEGIN IMMEDIATE')
+                try:
+                    for player in conn.execute('SELECT qq_id FROM players').fetchall():
+                        self._ensure_starter_cards(conn, player[0], self._now_iso())
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+            result["backup_path"] = str(backup_path) if backup_path else None
+            return result
+
+    def _grant_card(self, conn: sqlite3.Connection, qq_id: str, card_id: int,
+                    rarity: str, now: str, *, source: str,
+                    announce: bool = True) -> DrawCommitment:
+        """仅在调用方写事务内执行；三类发卡和好感奖励共用此路径。"""
+        if not self._growth_ready or not conn.in_transaction:
+            raise RuntimeError("发卡必须先初始化养成迁移并开启事务")
+        row = conn.execute("SELECT copies,bloom_stage FROM inventory WHERE qq_id=? AND card_id=?", (qq_id, card_id)).fetchone()
+        previous = int(row[0]) if row else 0
+        stage = int(row[1]) if row else 0
+        fragments = duplicate_fragments(rarity, previous, previous + 1, source=source)
+        if not self._growth_enabled:
+            fragments = 0
+        conn.execute("""INSERT INTO inventory
+            (qq_id,card_id,copies,is_kaika,is_cho_kaika,first_obtained_at,last_obtained_at,bloom_stage)
+            VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(qq_id,card_id) DO UPDATE SET
+            copies=excluded.copies,is_kaika=excluded.is_kaika,is_cho_kaika=excluded.is_cho_kaika,
+            last_obtained_at=excluded.last_obtained_at""",
+            (qq_id, card_id, previous+1, int(stage>=1), int(stage==2), now, now, stage))
+        if fragments:
+            change_item(conn, qq_id, "flower_fragment", fragments)
+            key = json.dumps(["duplicate", qq_id, card_id, previous + 1], separators=(",", ":"))
+            conn.execute("INSERT INTO growth_events VALUES(?,?,?,?,?,?,?)", (
+                key, qq_id, source, json.dumps({"card_id": card_id, "copies": previous+1}),
+                json.dumps({"flower_fragment": fragments}), "growth-v1", now))
+        if announce and source == "affection_reward" and card_id in STARTER_CARD_IDS:
+            conn.execute(
+                """INSERT INTO pending_card_reveals(
+                       qq_id, card_id, before_copies, after_copies,
+                       is_kaika, is_cho_kaika, created_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (qq_id, card_id, previous, previous + 1, int(stage>=1), int(stage==2), now),
+            )
+        return DrawCommitment(card_id, row is None, previous+1, stage>=1, stage==2, fragments)
+
+    def _award_growth_daily(self, conn: sqlite3.Connection, qq_id: str, today: str,
+                            source: str, event_id: str, now: str) -> tuple[int, int, int, int]:
+        """与签到或审核同事务发奖；返回（小礼物, 中礼物, 花之碎片, 大礼物）。
+
+        签到物品集中在每月前若干天的活动里：礼物日发礼物，其余活动日发碎片，
+        活动之外的签到只发点数。任务物品按配置时区中的审核日期计每日上限。
+        """
+        if not self._growth_enabled:
+            return 0, 0, 0, 0
+        key = json.dumps(["daily_growth", source, qq_id, event_id], separators=(",", ":"))
+        if conn.execute("SELECT 1 FROM growth_events WHERE event_key=?", (key,)).fetchone():
+            return 0, 0, 0, 0
+        rules = self._growth_rules
+        small_gifts = medium_gifts = large_gifts = fragments = 0
+        if source == "checkin":
+            day = int(today[8:10])
+            if 1 <= day <= rules["monthly_event_days"]:
+                if day in rules["monthly_event_small_gift_days"]:
+                    small_gifts = 1
+                elif day in rules["monthly_event_medium_gift_days"]:
+                    medium_gifts = 1
+                elif day in rules["monthly_event_large_gift_days"]:
+                    large_gifts = 1
+                else:
+                    fragments = rules["monthly_event_fragments"]
+        else:
+            def quota(action, wanted, cap, period=today):
+                old = conn.execute("SELECT quantity FROM growth_daily_usage WHERE qq_id=? AND utc_date=? AND action=?", (qq_id, period, action)).fetchone()
+                used = int(old[0]) if old else 0
+                amount = min(wanted, max(0, cap-used))
+                conn.execute("""INSERT INTO growth_daily_usage VALUES(?,?,?,?) ON CONFLICT(qq_id,utc_date,action)
+                    DO UPDATE SET quantity=excluded.quantity""", (qq_id, period, action, used+amount))
+                return amount
+            medium_gifts = quota("task_gifts", int(source in rules["task_medium_gift_sources"]), rules["task_medium_gifts_daily_cap"])
+            if source == "ultimate" and rules["ultimate_large_gifts_lifetime_cap"] > 0:
+                large_gifts = quota("ultimate_large_gifts", 1, rules["ultimate_large_gifts_lifetime_cap"], "lifetime")
+            fragments = quota("task_fragments", rules["task_fragments"][source], rules["task_fragments_daily_cap"])
+        for item_id, amount in (("gift_small", small_gifts), ("gift_medium", medium_gifts),
+                                ("gift_large", large_gifts), ("flower_fragment", fragments)):
+            if amount:
+                change_item(conn, qq_id, item_id, amount)
+        conn.execute("INSERT INTO growth_events VALUES(?,?,?,?,?,?,?)", (
+            key, qq_id, source, json.dumps({"event_id": event_id, "utc_date": today}),
+            json.dumps({"gift_small": small_gifts, "gift_medium": medium_gifts,
+                        "gift_large": large_gifts, "flower_fragment": fragments}), rules["version"], now))
+        return small_gifts, medium_gifts, fragments, large_gifts
 
     def close(self) -> None:
         """关闭数据库连接。"""
@@ -443,16 +672,22 @@ class GachaDatabase:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+            self._growth_ready = False
+            self._growth_enabled = False
+            self._growth_rules = {}
 
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     @staticmethod
-    def current_date_str(offset_hours: int) -> str:
-        """返回国际时间 UTC 日期；offset_hours 为兼容保留参数。"""
-        del offset_hours
-        return datetime.now(timezone.utc).date().isoformat()
+    def current_date_str(offset_hours: int, *, now_utc: datetime | None = None) -> str:
+        """返回配置时区的日期，供签到、任务和每日额度共用。"""
+        clock = now_utc or datetime.now(timezone.utc)
+        if clock.tzinfo is None:
+            raise ValueError("now_utc 必须包含时区")
+        local = clock.astimezone(timezone(timedelta(hours=int(offset_hours))))
+        return local.date().isoformat()
 
     def _date_str(self, offset_hours: int) -> str:
         return self.current_date_str(offset_hours)
@@ -465,7 +700,7 @@ class GachaDatabase:
             current = date.fromisoformat(str(today or ""))
         except ValueError:
             return 0
-        return (expires - current).days
+        return max((expires - current).days, 0)
 
     @staticmethod
     def _is_previous_date(previous: str | None, current: str) -> bool:
@@ -478,10 +713,12 @@ class GachaDatabase:
             return False
 
     @staticmethod
-    def _weekly_5_key(offset_hours: int) -> str:
-        """Return the Thursday 00:00 UTC reset key for the current week."""
-        del offset_hours
-        now = datetime.now(timezone.utc)
+    def _weekly_5_key(offset_hours: int, *, now_utc: datetime | None = None) -> str:
+        """返回配置时区内最近一个周四零点对应的日期键。"""
+        clock = now_utc or datetime.now(timezone.utc)
+        if clock.tzinfo is None:
+            raise ValueError("now_utc 必须包含时区")
+        now = clock.astimezone(timezone(timedelta(hours=int(offset_hours))))
         days_since_thursday = (now.weekday() - WEEKLY_RESET_DAY) % 7
         reset_date = (now - timedelta(days=days_since_thursday)).date()
         if days_since_thursday == 0 and now.hour < WEEKLY_RESET_HOUR:
@@ -501,10 +738,69 @@ class GachaDatabase:
             SET weekly_5_guarantee_week = ?,
                 weekly_5_guarantee_used = 0,
                 updated_at = ?
-            WHERE qq_id = ? AND weekly_5_guarantee_week <> ?
+            WHERE qq_id = ? AND weekly_5_guarantee_week < ?
             """,
             (week_key, now, qq_id, week_key),
         )
+
+    def _ensure_starter_cards(self, conn, qq_id, now):
+        """只初始化17名角色的好感记录；第一张基础N卡改为查看好感页时懒获取。"""
+        if not self._growth_enabled:
+            return
+        for cid in self._starter_cards:
+            conn.execute('''INSERT OR IGNORE INTO player_characters
+                (qq_id,character_id,affection_points,curve_version,created_at,updated_at)
+                VALUES(?,?,0,?,?,?)''', (qq_id,cid,CURVE_VERSION,now,now))
+
+    def grant_starter_card(self, qq_id: str, cid: int, *, reward_keys: tuple[str, ...] = ()) -> dict:
+        """查看角色好感页时懒获取该角色的第一张基础N卡，幂等返回。"""
+        card_id = self._starter_cards.get(int(cid))
+        if card_id is None:
+            return {"granted": False, "card_id": None, "copies": 0}
+        with self._lock:
+            conn = self._conn
+            if conn is None:
+                raise RuntimeError("数据库尚未打开")
+            if not self._growth_ready or not self._growth_enabled:
+                return {"granted": False, "card_id": card_id, "copies": 0}
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._ensure_player(conn, qq_id)
+                row = conn.execute(
+                    "SELECT copies FROM inventory WHERE qq_id=? AND card_id=?",
+                    (qq_id, card_id),
+                ).fetchone()
+                # 节点卡与首张卡分别计数，避免先送礼后查看时把节点卡误当首张。
+                claimed = 0
+                if reward_keys:
+                    placeholders = ','.join('?' for _ in reward_keys)
+                    claimed = conn.execute(
+                        f"SELECT COUNT(*) FROM affection_reward_claims WHERE qq_id=? "
+                        f"AND character_id=? AND reward_key IN ({placeholders})",
+                        (qq_id, cid, *reward_keys),
+                    ).fetchone()[0]
+                if row is not None and int(row[0]) > claimed:
+                    conn.execute("COMMIT")
+                    return {"granted": False, "card_id": card_id, "copies": int(row[0])}
+                commitment = self._grant_card(
+                    conn,
+                    qq_id,
+                    card_id,
+                    "N",
+                    self._now_iso(),
+                    source="affection_reward",
+                    announce=False,
+                )
+                conn.execute("COMMIT")
+                return {
+                    "granted": True,
+                    "card_id": card_id,
+                    "copies": commitment.copies,
+                    "is_new": commitment.is_new,
+                }
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
 
     def _ensure_player(self, conn: sqlite3.Connection, qq_id: str) -> sqlite3.Row:
         now = self._now_iso()
@@ -517,195 +813,9 @@ class GachaDatabase:
         )
         row = conn.execute("SELECT * FROM players WHERE qq_id = ?", (qq_id,)).fetchone()
         if row is None:
-            raise RuntimeError(f"创建玩家失败: {qq_id}")
+            raise RuntimeError(f"创建用户失败: {qq_id}")
+        self._ensure_starter_cards(conn, qq_id, now)
         return row
-
-    def bind_identity(self, user_id: str, alias: str) -> tuple[bool, str]:
-        """绑定外部别名（如 QQ 号）到当前内部用户 ID。"""
-        alias = str(alias or "").strip()
-        user_id = str(user_id or "").strip()
-        if not alias:
-            return False, "别名不能为空"
-        if not user_id:
-            return False, "用户 ID 不能为空"
-        if alias == user_id:
-            return True, "已使用内部 ID"
-        now = self._now_iso()
-        with self._lock:
-            if self._conn is None:
-                raise RuntimeError("数据库尚未打开")
-            conn = self._conn
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                existing = conn.execute(
-                    "SELECT user_id FROM identity_aliases WHERE alias = ?",
-                    (alias,),
-                ).fetchone()
-                if existing is not None and str(existing["user_id"]) != user_id:
-                    conn.execute("ROLLBACK")
-                    return False, f"别名 {alias} 已绑定到其他用户"
-                self._merge_player(conn, alias, user_id)
-                conn.execute(
-                    """
-                    INSERT INTO identity_aliases(alias, user_id, created_at, updated_at)
-                    VALUES(?, ?, ?, ?)
-                    ON CONFLICT(alias) DO UPDATE SET
-                        user_id = excluded.user_id,
-                        updated_at = excluded.updated_at
-                    """,
-                    (alias, user_id, now, now),
-                )
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        return True, f"已绑定 {alias} -> {user_id}"
-
-    def resolve_identity(self, alias: str) -> str | None:
-        """把数字 QQ 等外部别名解析为内部用户 ID。"""
-        alias = str(alias or "").strip()
-        if not alias:
-            return None
-        with self._lock:
-            if self._conn is None:
-                raise RuntimeError("数据库尚未打开")
-            row = self._conn.execute(
-                "SELECT user_id FROM identity_aliases WHERE alias = ?",
-                (alias,),
-            ).fetchone()
-        return str(row["user_id"]) if row is not None else None
-
-    def get_bound_qq(self, user_id: str) -> str | None:
-        """返回绑定到该内部用户 ID 的数字 QQ；未绑定时返回 None。"""
-        user_id = str(user_id or "").strip()
-        if not user_id:
-            return None
-        with self._lock:
-            if self._conn is None:
-                raise RuntimeError("数据库尚未打开")
-            row = self._conn.execute(
-                """
-                SELECT alias FROM identity_aliases
-                WHERE user_id = ?
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """,
-                (user_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        alias = str(row["alias"] or "").strip()
-        return alias or None
-
-    def _merge_player(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        target_id: str,
-    ) -> None:
-        """把旧平台的数字 QQ 档案合并到当前 openid 档案。"""
-        if source_id == target_id:
-            return
-        source = conn.execute(
-            "SELECT * FROM players WHERE qq_id = ?",
-            (source_id,),
-        ).fetchone()
-        if source is None:
-            return
-        self._ensure_player(conn, target_id)
-        target = self._player_state(conn, target_id)
-        conn.execute(
-            """
-            UPDATE players
-            SET points = points + ?,
-                total_checkins = total_checkins + ?,
-                total_pulls = total_pulls + ?,
-                streak_days = MAX(streak_days, ?),
-                updated_at = ?
-            WHERE qq_id = ?
-            """,
-            (
-                int(source["points"]),
-                int(source["total_checkins"]),
-                int(source["total_pulls"]),
-                int(source["streak_days"]),
-                self._now_iso(),
-                target_id,
-            ),
-        )
-        if str(source["monthly_card_expires_at"] or "") > str(
-            target.monthly_card_expires_at or ""
-        ):
-            conn.execute(
-                """
-                UPDATE players
-                SET monthly_card_expires_at = ?,
-                    monthly_card_purchased_at = ?,
-                    monthly_card_purchase_count = MAX(monthly_card_purchase_count, ?),
-                    half_price_5_pull_count = half_price_5_pull_count + ?
-                WHERE qq_id = ?
-                """,
-                (
-                    source["monthly_card_expires_at"],
-                    source["monthly_card_purchased_at"],
-                    int(source["monthly_card_purchase_count"]),
-                    int(source["half_price_5_pull_count"]),
-                    target_id,
-                ),
-            )
-        conn.execute(
-            """
-            INSERT INTO checkins(qq_id, checkin_date, reward, created_at)
-            SELECT ?, checkin_date, reward, created_at FROM checkins
-            WHERE qq_id = ?
-            ON CONFLICT(qq_id, checkin_date) DO NOTHING
-            """,
-            (target_id, source_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO inventory(qq_id, card_id, copies, is_kaika, is_cho_kaika,
-                                  first_obtained_at, last_obtained_at)
-            SELECT ?, card_id, copies, is_kaika, is_cho_kaika,
-                   first_obtained_at, last_obtained_at
-            FROM inventory WHERE qq_id = ?
-            ON CONFLICT(qq_id, card_id) DO UPDATE SET
-                copies = inventory.copies + excluded.copies,
-                is_kaika = inventory.is_kaika OR excluded.is_kaika,
-                is_cho_kaika = inventory.is_cho_kaika OR excluded.is_cho_kaika,
-                last_obtained_at = MAX(inventory.last_obtained_at, excluded.last_obtained_at)
-            """,
-            (target_id, source_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO pool_select_state(qq_id, pool_id, select_points,
-                                          max_select_points, select_claimed, updated_at)
-            SELECT ?, pool_id, select_points, max_select_points,
-                   select_claimed, updated_at
-            FROM pool_select_state WHERE qq_id = ?
-            ON CONFLICT(qq_id, pool_id) DO UPDATE SET
-                select_points = pool_select_state.select_points + excluded.select_points,
-                max_select_points = MAX(pool_select_state.max_select_points,
-                                        excluded.max_select_points),
-                select_claimed = pool_select_state.select_claimed OR excluded.select_claimed,
-                updated_at = MAX(pool_select_state.updated_at, excluded.updated_at)
-            """,
-            (target_id, source_id),
-        )
-        conn.execute(
-            "UPDATE gacha_logs SET qq_id = ? WHERE qq_id = ?",
-            (target_id, source_id),
-        )
-        conn.execute(
-            "UPDATE admin_grants SET grantor_id = ? WHERE grantor_id = ?",
-            (target_id, source_id),
-        )
-        conn.execute(
-            "UPDATE admin_grants SET target_id = ? WHERE target_id = ?",
-            (target_id, source_id),
-        )
-        conn.execute("DELETE FROM players WHERE qq_id = ?", (source_id,))
 
     def weekly_5_guarantee_available(
         self,
@@ -724,11 +834,11 @@ class GachaDatabase:
                 self._ensure_player(conn, qq_id)
                 self._sync_weekly_5(conn, qq_id, week_key, self._now_iso())
                 row = conn.execute(
-                    "SELECT weekly_5_guarantee_used FROM players WHERE qq_id = ?",
+                    "SELECT weekly_5_guarantee_week, weekly_5_guarantee_used FROM players WHERE qq_id = ?",
                     (qq_id,),
                 ).fetchone()
                 conn.execute("COMMIT")
-                return bool(row) and int(row["weekly_5_guarantee_used"]) == 0
+                return bool(row) and str(row["weekly_5_guarantee_week"]) == week_key and int(row["weekly_5_guarantee_used"]) == 0
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
@@ -750,10 +860,10 @@ class GachaDatabase:
                 self._ensure_player(conn, qq_id)
                 self._sync_weekly_5(conn, qq_id, week_key, self._now_iso())
                 row = conn.execute(
-                    "SELECT weekly_5_guarantee_used FROM players WHERE qq_id = ?",
+                    "SELECT weekly_5_guarantee_week, weekly_5_guarantee_used FROM players WHERE qq_id = ?",
                     (qq_id,),
                 ).fetchone()
-                if row is None or int(row["weekly_5_guarantee_used"]) != 0:
+                if row is None or str(row["weekly_5_guarantee_week"]) != week_key or int(row["weekly_5_guarantee_used"]) != 0:
                     conn.execute("ROLLBACK")
                     return False
                 conn.execute(
@@ -775,7 +885,7 @@ class GachaDatabase:
     def _player_state(self, conn: sqlite3.Connection, qq_id: str) -> PlayerState:
         row = conn.execute("SELECT * FROM players WHERE qq_id = ?", (qq_id,)).fetchone()
         if row is None:
-            raise RuntimeError(f"玩家不存在: {qq_id}")
+            raise RuntimeError(f"用户不存在: {qq_id}")
         return PlayerState(
             qq_id=str(row["qq_id"]),
             points=int(row["points"]),
@@ -791,7 +901,7 @@ class GachaDatabase:
         )
 
     def get_player(self, qq_id: str) -> PlayerState:
-        """获取或初始化玩家。"""
+        """获取或初始化用户。"""
         with self._lock:
             if self._conn is None:
                 raise RuntimeError("数据库尚未打开")
@@ -813,7 +923,7 @@ class GachaDatabase:
         *,
         note: str = "",
     ) -> GrantReceipt:
-        """管理员向指定玩家发放点数，并记录发放日志。"""
+        """管理员向指定用户发放点数，并记录发放日志。"""
         if amount <= 0:
             return GrantReceipt(success=False, points=0, error="发放点数必须大于 0")
 
@@ -1170,6 +1280,16 @@ class GachaDatabase:
                         date=today,
                         error="今天已签到",
                     )
+                if str(player_row["last_checkin_date"] or "") > today:
+                    conn.execute("ROLLBACK")
+                    player = self._player_state(conn, qq_id)
+                    return CheckinReceipt(
+                        success=False,
+                        reward=0,
+                        points=player.points,
+                        date=today,
+                        error="账号签到日期晚于当前日期，请检查服务器时间或时区配置",
+                    )
 
                 if self._is_previous_date(
                     str(player_row["last_checkin_date"] or ""),
@@ -1226,53 +1346,28 @@ class GachaDatabase:
                     "INSERT INTO checkins(qq_id, checkin_date, reward, created_at) VALUES(?, ?, ?, ?)",
                     (qq_id, today, total_reward, now),
                 )
+                duplicate_reward = 0
                 non_gacha_card_id: int | None = None
+                non_gacha_is_new = False
                 non_gacha_copies = 0
                 non_gacha_is_kaika = False
                 non_gacha_is_cho_kaika = False
-                non_gacha_pool = list(non_gacha_card_ids or ())
+                non_gacha_pool = [(cid,rarity) for cid,rarity in (non_gacha_card_ids or ()) if cid not in STARTER_CARD_IDS]
                 if (
                     non_gacha_pool
                     and non_gacha_checkin_probability > 0
                     and self._random.random() < non_gacha_checkin_probability
                 ):
                     chosen_card_id, chosen_rarity = self._random.choice(non_gacha_pool)
-                    existing = conn.execute(
-                        "SELECT copies FROM inventory WHERE qq_id = ? AND card_id = ?",
-                        (qq_id, chosen_card_id),
-                    ).fetchone()
-                    previous_copies = int(existing["copies"]) if existing is not None else 0
-                    new_copies = previous_copies + 1
-                    _, is_kaika, is_cho_kaika = derive_growth(
-                        chosen_rarity,
-                        new_copies,
-                    )
-                    non_gacha_copies = new_copies
-                    non_gacha_is_kaika = is_kaika
-                    non_gacha_is_cho_kaika = is_cho_kaika
-                    conn.execute(
-                        """
-                        INSERT INTO inventory(
-                            qq_id, card_id, copies, is_kaika, is_cho_kaika,
-                            first_obtained_at, last_obtained_at
-                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(qq_id, card_id) DO UPDATE SET
-                            copies = excluded.copies,
-                            is_kaika = excluded.is_kaika,
-                            is_cho_kaika = excluded.is_cho_kaika,
-                            last_obtained_at = excluded.last_obtained_at
-                        """,
-                        (
-                            qq_id,
-                            chosen_card_id,
-                            new_copies,
-                            int(is_kaika),
-                            int(is_cho_kaika),
-                            now,
-                            now,
-                        ),
-                    )
+                    granted = self._grant_card(conn, qq_id, chosen_card_id, chosen_rarity, now, source="checkin")
+                    non_gacha_is_new = granted.is_new
+                    non_gacha_copies = granted.copies
+                    non_gacha_is_kaika = granted.is_kaika
+                    non_gacha_is_cho_kaika = granted.is_cho_kaika
+                    duplicate_reward = granted.fragments
                     non_gacha_card_id = chosen_card_id
+                small_gifts, medium_gifts, growth_fragments, large_gifts = self._award_growth_daily(
+                    conn, qq_id, today, "checkin", today, now)
                 conn.execute("COMMIT")
                 player = self._player_state(conn, qq_id)
                 return CheckinReceipt(
@@ -1288,9 +1383,14 @@ class GachaDatabase:
                     cycle_reward=cycle_reward,
                     monthly_reward=monthly_reward,
                     non_gacha_card_id=non_gacha_card_id,
+                    non_gacha_is_new=non_gacha_is_new,
                     non_gacha_copies=non_gacha_copies,
                     non_gacha_is_kaika=non_gacha_is_kaika,
                     non_gacha_is_cho_kaika=non_gacha_is_cho_kaika,
+                    small_gifts=small_gifts,
+                    medium_gifts=medium_gifts,
+                    large_gifts=large_gifts,
+                    growth_fragments=growth_fragments + duplicate_reward,
                 )
             except Exception:
                 conn.execute("ROLLBACK")
@@ -1425,36 +1525,9 @@ class GachaDatabase:
                         ),
                     )
 
-                existing = conn.execute(
-                    "SELECT copies FROM inventory WHERE qq_id = ? AND card_id = ?",
-                    (qq_id, card_id),
-                ).fetchone()
-                was_new = existing is None
-                previous_copies = int(existing["copies"]) if existing is not None else 0
-                new_copies = previous_copies + 1
-                _, is_kaika, is_cho_kaika = derive_growth(rarity, new_copies)
-                conn.execute(
-                    """
-                    INSERT INTO inventory(
-                        qq_id, card_id, copies, is_kaika, is_cho_kaika,
-                        first_obtained_at, last_obtained_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(qq_id, card_id) DO UPDATE SET
-                        copies = excluded.copies,
-                        is_kaika = excluded.is_kaika,
-                        is_cho_kaika = excluded.is_cho_kaika,
-                        last_obtained_at = excluded.last_obtained_at
-                    """,
-                    (
-                        qq_id,
-                        card_id,
-                        new_copies,
-                        int(is_kaika),
-                        int(is_cho_kaika),
-                        now,
-                        now,
-                    ),
-                )
+                granted = self._grant_card(conn, qq_id, card_id, rarity, now, source="select_card")
+                was_new = granted.is_new
+                new_copies = granted.copies
                 conn.execute(
                     """
                     UPDATE pool_select_state
@@ -1496,9 +1569,78 @@ class GachaDatabase:
                     card_id=card_id,
                     copies=new_copies,
                     is_new=was_new,
+                    fragments=granted.fragments,
+                    is_kaika=granted.is_kaika,
+                    is_cho_kaika=granted.is_cho_kaika,
                 )
             except Exception:
                 conn.execute("ROLLBACK")
+                raise
+
+    def perform_draw(self, qq_id, pool, count, *, cost, request_id, tz_offset_hours=0):
+        """资格、扣款、发卡、天井和消息去重在同一事务提交。"""
+        if not request_id or qq_id == 'unknown':
+            raise ValueError("缺少账号或消息ID，未执行抽卡")
+        if count not in (1, 5, 11) or cost <= 0:
+            raise ValueError("抽卡数量或消耗无效")
+        key = json.dumps(['draw', qq_id, request_id], separators=(',', ':'))
+        request = json.dumps({'pool': pool.pool_id, 'count': count}, sort_keys=True)
+        with self._lock:
+            conn = self._conn
+            if conn is None or not self._growth_ready:
+                raise RuntimeError("数据库尚未初始化")
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                old = conn.execute('SELECT request_json,result_json FROM growth_events WHERE event_key=?', (key,)).fetchone()
+                if old is not None:
+                    if old[0] != request:
+                        raise ValueError("消息ID已用于另一笔抽卡")
+                    saved = json.loads(old[1])
+                    saved['receipt']['commitments'] = [DrawCommitment(**r) for r in saved['receipt']['commitments']]
+                    saved['receipt'] = DrawReceipt(**saved['receipt'])
+                    conn.rollback()
+                    return saved
+                player = self._ensure_player(conn, qq_id)
+                now = self._now_iso()
+                half = count == 5 and int(player['half_price_5_pull_count']) > 0
+                charged = cost // 2 if half else cost
+                if int(player['points']) < charged:
+                    conn.rollback()
+                    return {'receipt': DrawReceipt(False, int(player['points']), [], error='点数不足'),
+                            'half_price_used': False, 'weekly_5_claimed': False, 'cost': charged}
+                weekly = False
+                if count == 5:
+                    week = self._weekly_5_key(tz_offset_hours)
+                    self._sync_weekly_5(conn, qq_id, week, now)
+                    weekly_row = conn.execute(
+                        'SELECT weekly_5_guarantee_week, weekly_5_guarantee_used FROM players WHERE qq_id=?',
+                        (qq_id,),
+                    ).fetchone()
+                    weekly = (
+                        weekly_row['weekly_5_guarantee_week'] == week
+                        and not weekly_row['weekly_5_guarantee_used']
+                    )
+                    if weekly:
+                        conn.execute('UPDATE players SET weekly_5_guarantee_used=1 WHERE qq_id=?', (qq_id,))
+                    if half:
+                        conn.execute('UPDATE players SET half_price_5_pull_count=half_price_5_pull_count-1 WHERE qq_id=?', (qq_id,))
+                cards = pool.draw(count, guarantee=count == 11 or weekly)
+                if len(cards) != count:
+                    raise ValueError("抽卡结果数量异常")
+                receipt = self.commit_draw(qq_id, [(c.id, c.rarity) for c in cards], cost=charged,
+                    pool_id=pool.pool_id, max_select_points=pool.pool_select_points or 0, _in_transaction=True)
+                result = {'receipt': receipt, 'half_price_used': half, 'weekly_5_claimed': weekly, 'cost': charged}
+                if not receipt.success:
+                    conn.rollback()
+                    return result
+                serialized = {**result, 'receipt': asdict(receipt)}
+                conn.execute('INSERT INTO growth_events VALUES(?,?,?,?,?,?,?)',
+                    (key, qq_id, 'draw_request', request, json.dumps(serialized), CURVE_VERSION, now))
+                conn.commit()
+                return result
+            except BaseException:
+                if conn.in_transaction:
+                    conn.rollback()
                 raise
 
     def commit_draw(
@@ -1509,6 +1651,7 @@ class GachaDatabase:
         cost: int,
         pool_id: str = "",
         max_select_points: int = 0,
+        _in_transaction: bool = False,
     ) -> DrawReceipt:
         """扣点数、写库存与日志。"""
         drawn_cards = [(int(card_id), str(rarity)) for card_id, rarity in cards]
@@ -1518,11 +1661,15 @@ class GachaDatabase:
             raise ValueError("抽卡消耗不能为负数")
         now = self._now_iso()
 
-        with self._lock:
+        with nullcontext() if _in_transaction else self._lock:
             if self._conn is None:
                 raise RuntimeError("数据库尚未打开")
             conn = self._conn
-            conn.execute("BEGIN IMMEDIATE")
+            if _in_transaction:
+                if not conn.in_transaction:
+                    raise RuntimeError("抽卡外层事务未开启")
+            else:
+                conn.execute("BEGIN IMMEDIATE")
             try:
                 player = self._ensure_player(conn, qq_id)
                 updated = conn.execute(
@@ -1536,7 +1683,8 @@ class GachaDatabase:
                     (cost, len(drawn_cards), now, qq_id, cost),
                 )
                 if updated.rowcount == 0:
-                    conn.execute("ROLLBACK")
+                    if not _in_transaction:
+                        conn.execute("ROLLBACK")
                     return DrawReceipt(
                         success=False,
                         points=int(player["points"]),
@@ -1574,45 +1722,9 @@ class GachaDatabase:
                 commitments: list[DrawCommitment] = []
                 log_entries: list[dict[str, Any]] = []
                 for card_id, rarity in drawn_cards:
-                    existing = conn.execute(
-                        "SELECT copies FROM inventory WHERE qq_id = ? AND card_id = ?",
-                        (qq_id, card_id),
-                    ).fetchone()
-                    was_new = existing is None
-                    previous_copies = int(existing["copies"]) if existing is not None else 0
-                    new_copies = previous_copies + 1
-                    _, is_kaika, is_cho_kaika = derive_growth(rarity, new_copies)
-                    conn.execute(
-                        """
-                        INSERT INTO inventory(
-                            qq_id, card_id, copies, is_kaika, is_cho_kaika,
-                            first_obtained_at, last_obtained_at
-                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(qq_id, card_id) DO UPDATE SET
-                            copies = excluded.copies,
-                            is_kaika = excluded.is_kaika,
-                            is_cho_kaika = excluded.is_cho_kaika,
-                            last_obtained_at = excluded.last_obtained_at
-                        """,
-                        (
-                            qq_id,
-                            card_id,
-                            new_copies,
-                            int(is_kaika),
-                            int(is_cho_kaika),
-                            now,
-                            now,
-                        ),
-                    )
-                    commitments.append(
-                        DrawCommitment(
-                            card_id=card_id,
-                            is_new=was_new,
-                            copies=new_copies,
-                            is_kaika=is_kaika,
-                            is_cho_kaika=is_cho_kaika,
-                        )
-                    )
+                    granted = self._grant_card(conn, qq_id, card_id, rarity, now, source="draw")
+                    was_new = granted.is_new
+                    commitments.append(granted)
                     log_entries.append(
                         {
                             "card_id": card_id,
@@ -1631,7 +1743,8 @@ class GachaDatabase:
                     """,
                     (qq_id, len(drawn_cards), cost, rarity_profile, result_json, now),
                 )
-                conn.execute("COMMIT")
+                if not _in_transaction:
+                    conn.execute("COMMIT")
                 final_player = self._player_state(conn, qq_id)
                 return DrawReceipt(
                     success=True,
@@ -1645,19 +1758,20 @@ class GachaDatabase:
                     ),
                     select_claimed=select_claimed,
                 )
-            except Exception:
-                conn.execute("ROLLBACK")
+            except BaseException:
+                if not _in_transaction:
+                    conn.execute("ROLLBACK")
                 raise
 
     def get_inventory(self, qq_id: str) -> list[InventoryEntry]:
-        """返回玩家的全部库存。"""
+        """返回用户的全部库存。"""
         with self._lock:
             if self._conn is None:
                 raise RuntimeError("数据库尚未打开")
             conn = self._conn
             rows = conn.execute(
                 """
-                SELECT card_id, copies, is_kaika, is_cho_kaika
+                SELECT *
                 FROM inventory
                 WHERE qq_id = ?
                 ORDER BY card_id
@@ -1668,8 +1782,12 @@ class GachaDatabase:
                 InventoryEntry(
                     card_id=int(row["card_id"]),
                     copies=int(row["copies"]),
-                    is_kaika=bool(row["is_kaika"]),
-                    is_cho_kaika=bool(row["is_cho_kaika"]),
+                    is_kaika=(int(row["bloom_stage"]) >= 1) if self._growth_ready else bool(row["is_kaika"]),
+                    is_cho_kaika=(int(row["bloom_stage"]) == 2) if self._growth_ready else bool(row["is_cho_kaika"]),
+                    bloom_stage=int(row["bloom_stage"]) if self._growth_ready else (2 if row["is_cho_kaika"] else 1 if row["is_kaika"] else 0),
+                    kaika_at=row["kaika_at"] if self._growth_ready else None,
+                    cho_kaika_at=row["cho_kaika_at"] if self._growth_ready else None,
+                    growth_origin=row["growth_origin"] if self._growth_ready else "legacy",
                 )
                 for row in rows
             ]
@@ -1788,6 +1906,16 @@ class GachaDatabase:
             (qq_id, task_id, action, actor_id, grade, points, note, now),
         )
 
+    @staticmethod
+    def _ultimate_chart_completed(conn, qq_id, game, song_id, difficulty_index):
+        # -1 是旧库无法恢复难度时的整曲锁；也禁止缺失难度绕过已完成谱面。
+        index = difficulty_index if difficulty_index is not None else -1
+        return conn.execute(
+            "SELECT 1 FROM ultimate_completed_charts WHERE qq_id=? AND game=? AND song_id=? "
+            "AND (difficulty_index=-1 OR difficulty_index=? OR ?=-1) LIMIT 1",
+            (qq_id, game, song_id, index, index),
+        ).fetchone() is not None
+
     def create_task(
         self,
         qq_id: str,
@@ -1807,14 +1935,16 @@ class GachaDatabase:
         note: str = "",
         normal_limit: int = 5,
         challenge_limit: int = 3,
+        advanced_limit: int = 1,
         tz_offset_hours: int = 0,
     ) -> TaskReceipt:
         """接取任务并记录每日配额。"""
-        if task_kind not in {"normal", "challenge", "ultimate"}:
+        if task_kind not in {"normal", "challenge", "advanced", "ultimate"}:
             return TaskReceipt(success=False, error="未知任务类型")
         kind_label = {
             "normal": "普通",
             "challenge": "挑战",
+            "advanced": "高级挑战",
             "ultimate": "终极",
         }.get(task_kind, task_kind)
         now = self._now_iso()
@@ -1827,8 +1957,24 @@ class GachaDatabase:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 self._ensure_player(conn, qq_id)
-                if task_kind in {"normal", "challenge"}:
-                    limit = normal_limit if task_kind == "normal" else challenge_limit
+                latest_task_date = conn.execute(
+                    "SELECT MAX(task_date) FROM tasks WHERE qq_id = ?", (qq_id,)
+                ).fetchone()[0]
+                latest_quota_date = conn.execute(
+                    "SELECT MAX(task_date) FROM daily_task_quota WHERE qq_id = ?", (qq_id,)
+                ).fetchone()[0]
+                if max(str(latest_task_date or ""), str(latest_quota_date or "")) > task_date:
+                    conn.execute("ROLLBACK")
+                    return TaskReceipt(
+                        success=False,
+                        error="任务记录晚于当前日期，请检查服务器时间或时区配置",
+                    )
+                if task_kind in {"normal", "challenge", "advanced"}:
+                    limit = {
+                        "normal": normal_limit,
+                        "challenge": challenge_limit,
+                        "advanced": advanced_limit,
+                    }[task_kind]
                     if not self._consume_task_quota(
                         conn, qq_id, task_kind, limit, task_date, now
                     ):
@@ -1840,16 +1986,13 @@ class GachaDatabase:
 
                 active_ultimate = 0
                 if task_kind == "ultimate":
+                    if self._ultimate_chart_completed(conn, qq_id, game, song_id, difficulty_index):
+                        conn.rollback()
+                        return TaskReceipt(success=False, error="该终极谱面已完成，不能重复接取")
                     progress = conn.execute(
                         "SELECT * FROM ultimate_progress WHERE qq_id = ?",
                         (qq_id,),
                     ).fetchone()
-                    if progress is not None and int(progress["finished"] or 0):
-                        conn.execute("ROLLBACK")
-                        return TaskReceipt(
-                            success=False,
-                            error="终极任务已完成，无法再次接取",
-                        )
                     helper_task_id = (
                         int(progress["active_task_id"])
                         if progress is not None and progress["active_task_id"] is not None
@@ -2050,6 +2193,7 @@ class GachaDatabase:
         *,
         grade: str,
         reward: int,
+        tz_offset_hours: int = 0,
     ) -> TaskReviewReceipt:
         now = self._now_iso()
         with self._lock:
@@ -2075,7 +2219,7 @@ class GachaDatabase:
                     conn.execute("ROLLBACK")
                     return TaskReviewReceipt(
                         success=False,
-                        error="任务尚未处于待审核状态",
+                        error="任务尚未提交成绩（图片 + /任务完成 <ID>）",
                     )
                 if int(row["awarded"] or 0):
                     conn.execute("ROLLBACK")
@@ -2116,11 +2260,62 @@ class GachaDatabase:
                     "SELECT points FROM players WHERE qq_id = ?",
                     (qq_id,),
                 ).fetchone()
+                _, medium_gifts, growth_fragments, large_gifts = self._award_growth_daily(
+                    conn, qq_id, self.current_date_str(tz_offset_hours), str(row["task_kind"]), str(task_id), now)
+                bloom_tickets = 0
+                cooldown_text = ""
+                ticket_source = (self._growth_rules or {}).get("bloom_ticket_source") or {}
+                if self._growth_ready and self._growth_enabled and ticket_source:
+                    required_grade = str(ticket_source.get("grade") or "SSS").upper().replace("＋", "+")
+                    actual_grade = str(grade or "").upper().replace("＋", "+")
+                    grade_ok = actual_grade == required_grade or (
+                        required_grade == "SSS" and actual_grade == "SSS+"
+                    )
+                    target_level = float(row["target_level_value"] or 0)
+                    if (
+                        str(row["task_kind"]) == str(ticket_source.get("kind") or "advanced")
+                        and target_level >= float(ticket_source.get("min_level") or 13.5)
+                        and grade_ok
+                    ):
+                        cooldown_days = max(int(ticket_source.get("cooldown_days") or 0), 0)
+                        last = conn.execute(
+                            "SELECT last_at FROM player_cooldowns WHERE qq_id=? AND key='bloom_ticket'",
+                            (qq_id,),
+                        ).fetchone()
+                        allowed = True
+                        remaining_days = 0
+                        if last is not None:
+                            try:
+                                last_dt = datetime.fromisoformat(str(last["last_at"]))
+                                now_dt = datetime.fromisoformat(now)
+                                elapsed = (now_dt - last_dt).total_seconds()
+                                window = cooldown_days * 86400
+                                if elapsed < window:
+                                    allowed = False
+                                    remaining_days = max(1, -(-int(window - elapsed) // 86400))
+                            except ValueError:
+                                allowed = True
+                        if allowed:
+                            change_item(conn, qq_id, "bloom_ticket", 1)
+                            conn.execute(
+                                """INSERT INTO player_cooldowns(qq_id, key, last_at)
+                                   VALUES(?, 'bloom_ticket', ?)
+                                   ON CONFLICT(qq_id, key) DO UPDATE SET last_at=excluded.last_at""",
+                                (qq_id, now),
+                            )
+                            bloom_tickets = 1
+                        else:
+                            cooldown_text = f"解花券冷却中（剩余{remaining_days}天）"
                 conn.execute("COMMIT")
                 return TaskReviewReceipt(
                     success=True,
+                    medium_gifts=medium_gifts,
+                    large_gifts=large_gifts,
+                    growth_fragments=growth_fragments,
                     points=int(player["points"]),
                     grade=grade,
+                    bloom_tickets=bloom_tickets,
+                    cooldown_text=cooldown_text,
                 )
             except Exception:
                 conn.execute("ROLLBACK")
@@ -2151,7 +2346,7 @@ class GachaDatabase:
                     conn.execute("ROLLBACK")
                     return TaskReviewReceipt(
                         success=False,
-                        error="任务尚未处于待审核状态",
+                        error="任务尚未提交成绩（图片 + /任务完成 <ID>）",
                     )
                 conn.execute(
                     """
@@ -2186,7 +2381,8 @@ class GachaDatabase:
         admin_id: str,
         *,
         reward: int,
-        ultimate_total: int = 1,
+        ultimate_total: int = 0,
+        tz_offset_hours: int = 0,
     ) -> TaskReviewReceipt:
         now = self._now_iso()
         with self._lock:
@@ -2209,7 +2405,7 @@ class GachaDatabase:
                     conn.execute("ROLLBACK")
                     return TaskReviewReceipt(
                         success=False,
-                        error="任务尚未处于待审核状态",
+                        error="任务尚未提交成绩（图片 + /任务完成 <ID>）",
                     )
                 if int(row["awarded"] or 0):
                     conn.execute("ROLLBACK")
@@ -2217,13 +2413,21 @@ class GachaDatabase:
                 qq_id = str(row["qq_id"])
                 game = str(row["game"])
                 song_id = str(row["song_id"])
+                difficulty_index = (
+                    int(row["difficulty_index"])
+                    if row["difficulty_index"] is not None
+                    else -1
+                )
+                if self._ultimate_chart_completed(conn, qq_id, game, song_id, difficulty_index):
+                    conn.rollback()
+                    return TaskReviewReceipt(success=False, error="该终极谱面已领取奖励，不能重复结算")
                 conn.execute(
                     """
-                    INSERT OR IGNORE INTO ultimate_completed_songs(
-                        qq_id, game, song_id, completed_at
-                    ) VALUES(?, ?, ?, ?)
+                    INSERT OR IGNORE INTO ultimate_completed_charts(
+                        qq_id, game, song_id, difficulty_index, completed_at
+                    ) VALUES(?, ?, ?, ?, ?)
                     """,
-                    (qq_id, game, song_id, now),
+                    (qq_id, game, song_id, difficulty_index, now),
                 )
                 conn.execute(
                     """
@@ -2252,7 +2456,7 @@ class GachaDatabase:
                 ).fetchone()
                 stage = int(progress["stage"] or 0) if progress is not None else 0
                 next_stage = stage + 1
-                finished = int(next_stage >= ultimate_total)
+                finished = int(bool(ultimate_total) and next_stage >= ultimate_total)
                 conn.execute(
                     """
                     INSERT INTO ultimate_progress(
@@ -2280,9 +2484,14 @@ class GachaDatabase:
                     "SELECT points FROM players WHERE qq_id = ?",
                     (qq_id,),
                 ).fetchone()
+                _, medium_gifts, growth_fragments, large_gifts = self._award_growth_daily(
+                    conn, qq_id, self.current_date_str(tz_offset_hours), "ultimate", str(task_id), now)
                 conn.execute("COMMIT")
                 return TaskReviewReceipt(
                     success=True,
+                    medium_gifts=medium_gifts,
+                    large_gifts=large_gifts,
+                    growth_fragments=growth_fragments,
                     points=int(player["points"]),
                     grade="SSS+",
                 )
@@ -2317,11 +2526,14 @@ class GachaDatabase:
                     conn.execute("ROLLBACK")
                     return TaskResetReceipt(
                         success=False,
-                        error="只有未完成或待审核任务可以重置",
+                        error=(
+                            "只有未完成/待审核任务可重置"
+                            ""
+                        ),
                     )
                 qq_id = str(row["qq_id"])
                 task_kind = str(row["task_kind"])
-                if task_kind in {"normal", "challenge"}:
+                if task_kind in {"normal", "challenge", "advanced"}:
                     self._release_task_quota(
                         conn,
                         qq_id,
@@ -2397,13 +2609,36 @@ class GachaDatabase:
                 raise RuntimeError("数据库尚未打开")
             rows = self._conn.execute(
                 """
-                SELECT game, song_id
-                FROM ultimate_completed_songs
+                SELECT game, song_id, difficulty_index
+                FROM ultimate_completed_charts
                 WHERE qq_id = ?
                 """,
                 (qq_id,),
             ).fetchall()
-            return {f"{row['game']}:{row['song_id']}" for row in rows}
+            keys: set[str] = set()
+            for row in rows:
+                song_key = f"{row['game']}:{row['song_id']}"
+                index = int(row["difficulty_index"])
+                keys.add(song_key if index < 0 else f"{song_key}:{index}")
+            return keys
+
+    def set_ultimate_finished(self, qq_id: str, finished: bool) -> None:
+        """候选池耗尽时标记整条终极线完成；重新有候选后接取会再次置零。"""
+        now = self._now_iso()
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            self._conn.execute(
+                """
+                INSERT INTO ultimate_progress(
+                    qq_id, stage, active_task_id, finished, completed_at
+                ) VALUES(?, 0, NULL, ?, ?)
+                ON CONFLICT(qq_id) DO UPDATE SET
+                    finished = excluded.finished,
+                    completed_at = excluded.completed_at
+                """,
+                (qq_id, int(finished), now if finished else None),
+            )
 
     def get_task_quota(
         self,
@@ -2442,7 +2677,7 @@ class GachaDatabase:
                         WHEN note = '' THEN '每日任务自动过期'
                         ELSE note || ' | 每日任务自动过期'
                     END
-                WHERE task_kind IN ('normal', 'challenge')
+                WHERE task_kind IN ('normal', 'challenge', 'advanced')
                   AND task_date < ?
                   AND status IN ('active', 'rejected')
                 """,
@@ -2500,7 +2735,7 @@ class GachaDatabase:
         tz_offset_hours: int = 0,
         savings_bonus_reset_days: int = 60,
     ) -> tuple[int, int]:
-        """按真实日期同步所有玩家的周保底与囤点周期。"""
+        """按真实日期同步所有用户的周保底与囤点周期。"""
         today = self.current_date_str(tz_offset_hours)
         week_key = self._weekly_5_key(tz_offset_hours)
         now = self._now_iso()
@@ -2508,17 +2743,20 @@ class GachaDatabase:
         with self._lock:
             if self._conn is None:
                 raise RuntimeError("数据库尚未打开")
-            weekly = self._conn.execute(
+            conn = self._conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                weekly = conn.execute(
                 """
                 UPDATE players
                 SET weekly_5_guarantee_week = ?,
                     weekly_5_guarantee_used = 0,
                     updated_at = ?
-                WHERE weekly_5_guarantee_week <> ?
+                WHERE weekly_5_guarantee_week < ?
                 """,
                 (week_key, now, week_key),
-            ).rowcount
-            savings = self._conn.execute(
+                ).rowcount
+                savings = conn.execute(
                 """
                 UPDATE players
                 SET savings_bonus_level = 0,
@@ -2528,8 +2766,12 @@ class GachaDatabase:
                   AND date(savings_bonus_start_date, ?) <= date(?)
                 """,
                 (today, now, reset_offset, today),
-            ).rowcount
-            return weekly, savings
+                ).rowcount
+                conn.execute("COMMIT")
+                return weekly, savings
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
 
     def get_setting(self, key: str) -> str:
         with self._lock:
@@ -2556,3 +2798,584 @@ class GachaDatabase:
                 """,
                 (key, str(value or ""), now),
             )
+
+    def add_timed_event(
+        self,
+        qq_id: str,
+        kind: str,
+        occurred_at: float,
+        *,
+        payload: str = "",
+        event_key: str = "",
+    ) -> None:
+        """记录需要跨重启保留的时间型状态；event_key 非空时按 kind+key 去重。"""
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            if event_key:
+                self._conn.execute(
+                    "DELETE FROM timed_events WHERE kind = ? AND event_key = ?",
+                    (kind, event_key),
+                )
+            self._conn.execute(
+                """
+                INSERT INTO timed_events(qq_id, kind, event_key, occurred_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (qq_id, kind, event_key, float(occurred_at), str(payload or "")),
+            )
+
+    def get_timed_event(self, kind: str, event_key: str) -> tuple[float, str] | None:
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            row = self._conn.execute(
+                """
+                SELECT occurred_at, payload
+                FROM timed_events
+                WHERE kind = ? AND event_key = ?
+                """,
+                (kind, event_key),
+            ).fetchone()
+            if row is None:
+                return None
+            return float(row["occurred_at"]), str(row["payload"] or "")
+
+    def list_timed_events(
+        self,
+        kind: str,
+        *,
+        qq_id: str | None = None,
+        since: float = 0.0,
+    ) -> list[tuple[float, str]]:
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            if qq_id is None:
+                rows = self._conn.execute(
+                    """
+                    SELECT occurred_at, payload FROM timed_events
+                    WHERE kind = ? AND occurred_at >= ?
+                    ORDER BY occurred_at ASC, id ASC
+                    """,
+                    (kind, float(since)),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """
+                    SELECT occurred_at, payload FROM timed_events
+                    WHERE kind = ? AND qq_id = ? AND occurred_at >= ?
+                    ORDER BY occurred_at ASC, id ASC
+                    """,
+                    (kind, qq_id, float(since)),
+                ).fetchall()
+            return [(float(row["occurred_at"]), str(row["payload"] or "")) for row in rows]
+
+    def prune_timed_events(self, before: float, *, kind: str | None = None) -> int:
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            cursor = self._conn.execute(
+                "DELETE FROM timed_events WHERE occurred_at < ?" + (" AND kind = ?" if kind else ""),
+                (float(before), kind) if kind else (float(before),),
+            )
+            return cursor.rowcount
+
+    def list_pending_card_reveals(self, qq_id: str) -> list[dict[str, int]]:
+        """读取待发送事件，发送确认后再删除。"""
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            rows = self._conn.execute(
+                """SELECT id, card_id, before_copies, after_copies, is_kaika, is_cho_kaika
+                   FROM pending_card_reveals
+                   WHERE qq_id = ?
+                   ORDER BY id ASC""",
+                (qq_id,),
+            ).fetchall()
+            return [
+                {
+                    "id": int(row["id"]),
+                    "card_id": int(row["card_id"]),
+                    "before_copies": int(row["before_copies"]),
+                    "after_copies": int(row["after_copies"]),
+                    "is_kaika": bool(row["is_kaika"]),
+                    "is_cho_kaika": bool(row["is_cho_kaika"]),
+                }
+                for row in rows
+            ]
+
+    def ack_card_reveal(self, qq_id: str, event_id: int) -> None:
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            self._conn.execute('DELETE FROM pending_card_reveals WHERE qq_id=? AND id=?', (qq_id,event_id))
+
+    @staticmethod
+    def _canonical_of(conn: sqlite3.Connection, alias: str) -> str | None:
+        row = conn.execute(
+            "SELECT canonical FROM identity_links WHERE alias = ?",
+            (alias,),
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+
+    @staticmethod
+    def _migrate_identity_links(conn: sqlite3.Connection) -> None:
+        """把旧的 identity_aliases 迁移到规范账号表（幂等）。"""
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "identity_aliases" not in tables:
+            return
+        for alias, user_id, created_at, updated_at in conn.execute(
+            "SELECT alias, user_id, created_at, updated_at FROM identity_aliases"
+        ):
+            alias = str(alias or "").strip()
+            user_id = str(user_id or "").strip()
+            if not alias or not user_id:
+                continue
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO identity_links(alias, canonical, created_at, updated_at)
+                VALUES(?, ?, ?, ?)
+                """,
+                (alias, user_id, created_at, updated_at),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO identity_links(alias, canonical, created_at, updated_at)
+                VALUES(?, ?, ?, ?)
+                """,
+                (user_id, user_id, created_at, updated_at),
+            )
+
+
+    def bind_identity(self, user_id: str, alias: str) -> tuple[bool, str]:
+        """绑定外部别名（如数字 QQ）到规范账号，并合并各机器人上的旧档案。
+
+        QQ 官方适配器的 openid 按机器人账号隔离：同一个人的不同 openid 通过
+        同一个数字 QQ 归并到同一规范账号，从而跨机器人共享数据与管理员权限。
+        """
+        alias = str(alias or "").strip()
+        user_id = str(user_id or "").strip()
+        if not alias:
+            return False, "别名不能为空"
+        if not user_id:
+            return False, "用户 ID 不能为空"
+        now = self._now_iso()
+        merged: list[str] = []
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            conn = self._conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._migrate_identity_links(conn)
+                canonical = (
+                    self._canonical_of(conn, user_id)
+                    or self._canonical_of(conn, alias)
+                    or user_id
+                )
+                self._ensure_player(conn, canonical)
+                if canonical != user_id:
+                    self._merge_player(conn, user_id, canonical)
+                    merged.append(user_id)
+                if canonical != alias:
+                    self._merge_player(conn, alias, canonical)
+                    merged.append(alias)
+                for key in {alias, user_id, canonical}:
+                    conn.execute(
+                        """
+                        INSERT INTO identity_links(alias, canonical, created_at, updated_at)
+                        VALUES(?, ?, ?, ?)
+                        ON CONFLICT(alias) DO UPDATE SET
+                            canonical = excluded.canonical,
+                            updated_at = excluded.updated_at
+                        """,
+                        (key, canonical, now, now),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        suffix = "（已合并 " + "、".join(dict.fromkeys(merged)) + "）" if merged else ""
+        linked = "" if alias == canonical else f"{alias} → "
+        return True, (
+            f"绑定成功：{linked}{canonical}{suffix}\n"
+            "现在可以领取任务、养成和奖励；查看余额：/点数"
+        )
+
+
+    def resolve_identity(self, alias: str) -> str | None:
+        """把数字 QQ / openid 解析为规范账号 ID；未绑定时返回 None。"""
+        alias = str(alias or "").strip()
+        if not alias:
+            return None
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            self._migrate_identity_links(self._conn)
+            return self._canonical_of(self._conn, alias)
+
+
+    def resolve_account(self, user_id: str) -> str:
+        """返回命令应使用的规范账号 ID；未绑定时返回原 ID。"""
+        raw = str(user_id or "").strip()
+        if not raw:
+            return raw
+        resolved = self.resolve_identity(raw)
+        return resolved or raw
+
+
+    def get_bound_qq(self, user_id: str) -> str | None:
+        """返回该账号绑定的数字 QQ；未绑定时返回 None。"""
+        raw = str(user_id or "").strip()
+        if not raw:
+            return None
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("数据库尚未打开")
+            self._migrate_identity_links(self._conn)
+            canonical = self._canonical_of(self._conn, raw) or raw
+            row = self._conn.execute(
+                """
+                SELECT alias FROM identity_links
+                WHERE canonical = ?
+                  AND alias GLOB '[0-9]*'
+                  AND alias NOT GLOB '*[^0-9]*'
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (canonical,),
+            ).fetchone()
+        if row is None:
+            return None
+        alias = str(row["alias"] or "").strip()
+        return alias or None
+
+
+    def _merge_player(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        target_id: str,
+    ) -> None:
+        """把旧平台档案合并到当前内部 ID（如 QQ 官方 openid）。"""
+        if source_id == target_id:
+            return
+        source = conn.execute(
+            "SELECT * FROM players WHERE qq_id = ?",
+            (source_id,),
+        ).fetchone()
+        if source is None:
+            return
+        self._ensure_player(conn, target_id)
+        target = conn.execute(
+            "SELECT * FROM players WHERE qq_id = ?",
+            (target_id,),
+        ).fetchone()
+        now = self._now_iso()
+
+        source_week = str(source["weekly_5_guarantee_week"] or "")
+        target_week = str(target["weekly_5_guarantee_week"] or "")
+        if source_week == target_week:
+            week_used = max(
+                int(source["weekly_5_guarantee_used"] or 0),
+                int(target["weekly_5_guarantee_used"] or 0),
+            )
+        elif source_week > target_week:
+            week_used = int(source["weekly_5_guarantee_used"] or 0)
+        else:
+            week_used = int(target["weekly_5_guarantee_used"] or 0)
+        starts = [
+            value
+            for value in (
+                str(source["savings_bonus_start_date"] or ""),
+                str(target["savings_bonus_start_date"] or ""),
+            )
+            if value
+        ]
+        savings_start = min(starts) if starts else ""
+
+        conn.execute(
+            """
+            UPDATE players
+            SET points = points + ?,
+                total_checkins = total_checkins + ?,
+                total_pulls = total_pulls + ?,
+                streak_days = MAX(streak_days, ?),
+                last_checkin_date = MAX(COALESCE(last_checkin_date, ''), COALESCE(?, '')),
+                savings_bonus_level = MAX(savings_bonus_level, ?),
+                savings_bonus_start_date = ?,
+                weekly_5_guarantee_week = ?,
+                weekly_5_guarantee_used = ?,
+                updated_at = ?
+            WHERE qq_id = ?
+            """,
+            (
+                int(source["points"] or 0),
+                int(source["total_checkins"] or 0),
+                int(source["total_pulls"] or 0),
+                int(source["streak_days"] or 0),
+                source["last_checkin_date"],
+                int(source["savings_bonus_level"] or 0),
+                savings_start,
+                max(source_week, target_week),
+                week_used,
+                now,
+                target_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE players
+            SET monthly_card_expires_at = MAX(monthly_card_expires_at, ?),
+                monthly_card_purchased_at = MAX(monthly_card_purchased_at, ?),
+                monthly_card_purchase_count = MAX(monthly_card_purchase_count, ?),
+                half_price_5_pull_count = half_price_5_pull_count + ?
+            WHERE qq_id = ?
+            """,
+            (
+                str(source["monthly_card_expires_at"] or ""),
+                str(source["monthly_card_purchased_at"] or ""),
+                int(source["monthly_card_purchase_count"] or 0),
+                int(source["half_price_5_pull_count"] or 0),
+                target_id,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO checkins(qq_id, checkin_date, reward, created_at)
+            SELECT ?, checkin_date, reward, created_at FROM checkins
+            WHERE qq_id = ?
+            ON CONFLICT(qq_id, checkin_date) DO NOTHING
+            """,
+            (target_id, source_id),
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(inventory)")}
+        if "bloom_stage" in columns:
+            conn.execute(
+                """
+                INSERT INTO inventory(qq_id, card_id, copies, is_kaika, is_cho_kaika,
+                                      first_obtained_at, last_obtained_at,
+                                      bloom_stage, kaika_at, cho_kaika_at, growth_origin)
+                SELECT ?, card_id, copies, is_kaika, is_cho_kaika,
+                       first_obtained_at, last_obtained_at,
+                       bloom_stage, kaika_at, cho_kaika_at, growth_origin
+                FROM inventory WHERE qq_id = ?
+                ON CONFLICT(qq_id, card_id) DO UPDATE SET
+                    copies = inventory.copies + excluded.copies,
+                    is_kaika = MAX(inventory.is_kaika, excluded.is_kaika),
+                    is_cho_kaika = MAX(inventory.is_cho_kaika, excluded.is_cho_kaika),
+                    bloom_stage = MAX(inventory.bloom_stage, excluded.bloom_stage),
+                    kaika_at = COALESCE(inventory.kaika_at, excluded.kaika_at),
+                    cho_kaika_at = COALESCE(inventory.cho_kaika_at, excluded.cho_kaika_at),
+                    growth_origin = CASE
+                        WHEN inventory.growth_origin = 'legacy'
+                             OR excluded.growth_origin = 'legacy'
+                        THEN 'legacy' ELSE inventory.growth_origin END,
+                    last_obtained_at = MAX(inventory.last_obtained_at, excluded.last_obtained_at)
+                """,
+                (target_id, source_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO inventory(qq_id, card_id, copies, is_kaika, is_cho_kaika,
+                                      first_obtained_at, last_obtained_at)
+                SELECT ?, card_id, copies, is_kaika, is_cho_kaika,
+                       first_obtained_at, last_obtained_at
+                FROM inventory WHERE qq_id = ?
+                ON CONFLICT(qq_id, card_id) DO UPDATE SET
+                    copies = inventory.copies + excluded.copies,
+                    is_kaika = MAX(inventory.is_kaika, excluded.is_kaika),
+                    is_cho_kaika = MAX(inventory.is_cho_kaika, excluded.is_cho_kaika),
+                    last_obtained_at = MAX(inventory.last_obtained_at, excluded.last_obtained_at)
+                """,
+                (target_id, source_id),
+            )
+        conn.execute(
+            """
+            INSERT INTO pool_select_state(qq_id, pool_id, select_points,
+                                          max_select_points, select_claimed, updated_at)
+            SELECT ?, pool_id, select_points, max_select_points,
+                   select_claimed, updated_at
+            FROM pool_select_state WHERE qq_id = ?
+            ON CONFLICT(qq_id, pool_id) DO UPDATE SET
+                select_points = pool_select_state.select_points + excluded.select_points,
+                max_select_points = MAX(pool_select_state.max_select_points,
+                                        excluded.max_select_points),
+                select_claimed = MAX(pool_select_state.select_claimed, excluded.select_claimed),
+                updated_at = MAX(pool_select_state.updated_at, excluded.updated_at)
+            """,
+            (target_id, source_id),
+        )
+        conn.execute("UPDATE gacha_logs SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        conn.execute("UPDATE admin_grants SET grantor_id = ? WHERE grantor_id = ?", (target_id, source_id))
+        conn.execute("UPDATE admin_grants SET target_id = ? WHERE target_id = ?", (target_id, source_id))
+        conn.execute("UPDATE tasks SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        conn.execute("UPDATE tasks SET submitted_by = ? WHERE submitted_by = ?", (target_id, source_id))
+        conn.execute("UPDATE tasks SET reviewed_by = ? WHERE reviewed_by = ?", (target_id, source_id))
+        conn.execute("UPDATE task_audit SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        conn.execute("UPDATE task_audit SET actor_id = ? WHERE actor_id = ?", (target_id, source_id))
+        conn.execute(
+            """
+            INSERT INTO daily_task_quota(qq_id, task_date, task_kind, used_count)
+            SELECT ?, task_date, task_kind, used_count FROM daily_task_quota WHERE qq_id = ?
+            ON CONFLICT(qq_id, task_date, task_kind) DO UPDATE SET
+                used_count = MAX(daily_task_quota.used_count, excluded.used_count)
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO ultimate_completed_songs(qq_id, game, song_id, completed_at)
+            SELECT ?, game, song_id, completed_at FROM ultimate_completed_songs WHERE qq_id = ?
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO ultimate_completed_charts
+                (qq_id, game, song_id, difficulty_index, completed_at)
+            SELECT ?, game, song_id, difficulty_index, completed_at
+            FROM ultimate_completed_charts WHERE qq_id = ?
+            """,
+            (target_id, source_id),
+        )
+        conn.execute("UPDATE timed_events SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        conn.execute("UPDATE pending_card_reveals SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        conn.execute(
+            """
+            INSERT INTO player_cooldowns(qq_id, key, last_at)
+            SELECT ?, key, last_at FROM player_cooldowns WHERE qq_id = ?
+            ON CONFLICT(qq_id, key) DO UPDATE SET
+                last_at = MAX(player_cooldowns.last_at, excluded.last_at)
+            """,
+            (target_id, source_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO ultimate_progress(qq_id, stage, active_task_id, finished, completed_at)
+            SELECT ?, stage, active_task_id, finished, completed_at
+            FROM ultimate_progress WHERE qq_id = ?
+            ON CONFLICT(qq_id) DO UPDATE SET
+                stage = MAX(ultimate_progress.stage, excluded.stage),
+                active_task_id = COALESCE(ultimate_progress.active_task_id,
+                                          excluded.active_task_id),
+                finished = MAX(ultimate_progress.finished, excluded.finished),
+                completed_at = MAX(COALESCE(ultimate_progress.completed_at, ''),
+                                   COALESCE(excluded.completed_at, ''))
+            """,
+            (target_id, source_id),
+        )
+
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "player_items" in tables:
+            conn.execute(
+                """
+                INSERT INTO player_items(qq_id, item_id, quantity)
+                SELECT ?, item_id, quantity FROM player_items WHERE qq_id = ?
+                ON CONFLICT(qq_id, item_id) DO UPDATE SET
+                    quantity = player_items.quantity + excluded.quantity
+                """,
+                (target_id, source_id),
+            )
+        if "player_characters" in tables:
+            conn.execute(
+                """
+                INSERT INTO player_characters(qq_id, character_id, affection_points,
+                                              curve_version, created_at, updated_at)
+                SELECT ?, character_id, affection_points, curve_version, created_at, updated_at
+                FROM player_characters WHERE qq_id = ?
+                ON CONFLICT(qq_id, character_id) DO UPDATE SET
+                    affection_points = MAX(player_characters.affection_points,
+                                           excluded.affection_points),
+                    updated_at = MAX(player_characters.updated_at, excluded.updated_at)
+                """,
+                (target_id, source_id),
+            )
+        if "player_growth_profile" in tables:
+            conn.execute(
+                """
+                INSERT INTO player_growth_profile(qq_id, partner_character_id,
+                                                  title_id, nameplate_id, attachment_id)
+                SELECT ?, partner_character_id, title_id, nameplate_id, attachment_id
+                FROM player_growth_profile WHERE qq_id = ?
+                ON CONFLICT(qq_id) DO UPDATE SET
+                    partner_character_id = COALESCE(player_growth_profile.partner_character_id,
+                                                    excluded.partner_character_id),
+                    title_id = COALESCE(player_growth_profile.title_id, excluded.title_id),
+                    nameplate_id = COALESCE(player_growth_profile.nameplate_id,
+                                            excluded.nameplate_id),
+                    attachment_id = COALESCE(player_growth_profile.attachment_id,
+                                             excluded.attachment_id)
+                """,
+                (target_id, source_id),
+            )
+        if "affection_reward_claims" in tables:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO affection_reward_claims
+                    (qq_id, character_id, reward_key, config_version, claimed_at)
+                SELECT ?, character_id, reward_key, config_version, claimed_at
+                FROM affection_reward_claims WHERE qq_id = ?
+                """,
+                (target_id, source_id),
+            )
+        if "player_cosmetics" in tables:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO player_cosmetics
+                    (qq_id, cosmetic_type, cosmetic_id, source, obtained_at)
+                SELECT ?, cosmetic_type, cosmetic_id, source, obtained_at
+                FROM player_cosmetics WHERE qq_id = ?
+                """,
+                (target_id, source_id),
+            )
+        if "growth_daily_usage" in tables:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO growth_daily_usage(qq_id, utc_date, action, quantity)
+                SELECT ?, utc_date, action, quantity FROM growth_daily_usage WHERE qq_id = ?
+                """,
+                (target_id, source_id),
+            )
+        if "growth_events" in tables:
+            conn.execute("UPDATE growth_events SET qq_id = ? WHERE qq_id = ?", (target_id, source_id))
+        if "growth_migration_inventory" in tables:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO growth_migration_inventory
+                    (qq_id, card_id, copies, old_kaika, old_cho_kaika, resolved, diagnostic)
+                SELECT ?, card_id, copies, old_kaika, old_cho_kaika, resolved, diagnostic
+                FROM growth_migration_inventory WHERE qq_id = ?
+                """,
+                (target_id, source_id),
+            )
+        # 子表仍引用源玩家时先清空，再删除玩家行（外键开启时也能安全合并）。
+        for table in (
+            "growth_migration_inventory",
+            "affection_reward_claims",
+            "player_cosmetics",
+            "growth_daily_usage",
+            "player_growth_profile",
+            "player_characters",
+            "player_items",
+            "checkins",
+            "pool_select_state",
+            "daily_task_quota",
+            "ultimate_completed_songs",
+            "ultimate_completed_charts",
+            "ultimate_progress",
+            "player_cooldowns",
+            "inventory",
+        ):
+            if table in tables:
+                conn.execute(f"DELETE FROM {table} WHERE qq_id = ?", (source_id,))
+        conn.execute("DELETE FROM players WHERE qq_id = ?", (source_id,))
