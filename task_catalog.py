@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import random
 import shutil
 import subprocess
@@ -29,6 +28,13 @@ from typing import Any, Iterable
 from PIL import Image
 
 from .task_render import TaskCardData, render_task_card
+
+try:
+    from astrbot.api import logger
+except ModuleNotFoundError as exc:
+    if exc.name != "astrbot":
+        raise
+    from .maibot_sdk import standalone_logger as logger
 
 
 DEFAULT_SOURCES: dict[str, str] = {
@@ -48,8 +54,6 @@ DEFAULT_ASSET_BASE = {
     "maimai": "https://assets2.lxns.net/maimai",
     "chunithm": "https://assets2.lxns.net/chunithm",
 }
-
-logger = logging.getLogger(__name__)
 
 GAME_LABELS = {
     "ongeki": "音击",

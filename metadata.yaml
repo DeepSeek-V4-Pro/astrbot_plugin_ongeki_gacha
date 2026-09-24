@@ -16,7 +16,7 @@ desc: |
   openid，需先 `/绑定QQ <QQ号>` 绑定数字 QQ，再使用依赖身份绑定的功能；该平台也
   收不到 @ 普通成员的 openid，`/奖励`、`/终极完成` 请改用数字 QQ 指定目标。
   素材默认读取插件目录 `assets/card_data`，可在 WebUI 配置面板改为外部绝对路径。
-version: "1.3.0"
+version: "1.3.1"
 author: DeepSeek-V4
 author_url: https://github.com/DeepSeek-V4-Pro
 repo: https://github.com/DeepSeek-V4-Pro/astrbot_plugin_ongeki_gacha

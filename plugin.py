@@ -12,7 +12,6 @@ from .maibot_sdk import Command, MaiBotPlugin
 import asyncio
 import base64
 import json
-import logging
 import re
 import time
 import urllib.error
@@ -54,8 +53,12 @@ from .task_render import TaskCardData, render_task_card
 from .task_commands import TaskCommandsMixin
 from .text_render import render_text_card
 
-
-logger = logging.getLogger(__name__)
+try:
+    from astrbot.api import logger
+except ModuleNotFoundError as exc:
+    if exc.name != "astrbot":
+        raise
+    from .maibot_sdk import standalone_logger as logger
 RENDER_CACHE_TTL_SECONDS = 24 * 60 * 60
 POOL_IMAGE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 MAX_POOL_IMAGE_BYTES = 8 * 1024 * 1024

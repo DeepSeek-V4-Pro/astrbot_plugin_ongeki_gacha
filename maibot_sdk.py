@@ -18,6 +18,22 @@ from typing import Any, Callable, Optional
 import pydantic
 
 
+class _StandaloneLogger:
+    """Keep standalone development tools usable without AstrBot installed."""
+
+    def __getattr__(self, name: str) -> Callable:
+        if name not in {"debug", "info", "warning", "error", "exception", "critical"}:
+            raise AttributeError(name)
+        return self._discard
+
+    @staticmethod
+    def _discard(*args: Any, **kwargs: Any) -> None:
+        pass
+
+
+standalone_logger = _StandaloneLogger()
+
+
 class PluginConfigBase(pydantic.BaseModel):
     """强类型配置基类（pydantic v2）。"""
 
