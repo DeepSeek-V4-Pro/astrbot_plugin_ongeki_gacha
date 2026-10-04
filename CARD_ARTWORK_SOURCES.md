@@ -163,7 +163,7 @@ python card_asset_tools.py verify
 支持文件名映射、分批导入和独立数据目录；详细说明见
 [CARD_ASSET_TOOLS.md](CARD_ASSET_TOOLS.md)。
 
-如果需要更接近上游图层/字体排版的合成结果，可改用浏览器版
+需要浏览器处理图层与字体排版时，可改用浏览器版
 `compose_card_art.py`（需 Playwright，仍然不联网下载素材）。
 
 ---

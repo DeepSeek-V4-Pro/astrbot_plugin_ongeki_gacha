@@ -54,6 +54,47 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('手动播放',classification)
         self.sender.custom.assert_not_called()
 
+    async def test_rules_show_configured_gift_sources_and_values(self):
+        growth = self.plugin.config.growth
+        growth.task_small_gift_sources = ['advanced']
+        growth.task_medium_gift_sources = []
+        growth.ultimate_large_gifts_lifetime_cap = 2
+        growth.gift_large_points = 12345
+        text = '\n'.join(self.plugin._rules_text())
+        self.assertIn('高级挑战每次1份小礼物', text)
+        self.assertIn('任务不发中礼物', text)
+        self.assertIn('终极任务每次1份大礼物（账号累计上限2）', text)
+        self.assertIn('大礼物12345好感', text)
+        self.assertNotIn('普通每次1份小礼物', text)
+
+    async def test_config_rejects_duplicate_gift_dates(self):
+        from .config_model import GrowthConfig
+        for values in ({'monthly_event_small_gift_days': [1, 1]},
+                       {'monthly_event_medium_gift_days': [1]}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                GrowthConfig(**values)
+        GrowthConfig(monthly_event_bloom_ticket_days=[1, 4, 5])
+
+    async def test_exchange_shared_bound_account_and_text_fallback(self):
+        db = self.plugin._db
+        self.assertTrue(db.bind_identity('user', '123456')[0])
+        self.assertTrue(db.bind_identity('second-openid', '123456')[0])
+        db._conn.execute('BEGIN IMMEDIATE')
+        change_item(db._conn, 'user', 'flower_fragment', 12)
+        db._conn.commit()
+        self.plugin._render_ready = False
+        for sender in ('user', 'second-openid'):
+            result = await self.plugin.handle_growth(
+                stream_id='mock-group', user_id=sender, message_id='shared-exchange',
+                matched_groups={'growth_action': '礼物', 'growth_args': '兑换 大 1'},
+            )
+            self.assertIn('已兑换 大礼物 ×1', result[1])
+        items = {row['item_id']: row['quantity'] for row in self.plugin._growth.snapshot('user')['player_items']}
+        self.assertEqual(items['gift_large'], 1)
+        self.assertEqual(items.get('flower_fragment', 0), 0)
+        self.sender.text.assert_awaited()
+        self.sender.image.assert_not_awaited()
+
     async def test_short_reply_stays_text_and_long_reply_uses_card(self):
         self.sender.text.reset_mock();self.sender.image.reset_mock()
         await self.dispatch('/点数','points')
@@ -154,6 +195,17 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.plugin._cleanup_task)
 
     async def test_task_review_growth_receipts(self):
+        advanced=self.plugin._db.create_task('user',task_kind='advanced',game='maimai',song_id='s0',song_title='T0')
+        self.assertTrue(advanced.success)
+        self.assertTrue(self.plugin._db.submit_task(advanced.task_id,'user').success)
+        response=await self.dispatch(f'/任务审核 {advanced.task_id} SSS','review-advanced')
+        self.assertIn(
+            f"已发放 {self.plugin.config.task.advanced_reward_sss} 点",
+            response[1],
+        )
+        self.assertIn('中礼物 ×1',response[1])
+        self.assertNotIn('大礼物',response[1])
+        self.assertIn('花之碎片 +1',response[1])
         challenge=self.plugin._db.create_task('user',task_kind='challenge',game='maimai',song_id='s1',song_title='T1')
         self.assertTrue(challenge.success)
         self.assertTrue(self.plugin._db.submit_task(challenge.task_id,'user').success)
@@ -163,7 +215,7 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
             response[1],
         )
         self.assertIn('中礼物 ×1',response[1])
-        self.assertIn('花之碎片 +1',response[1])
+        self.assertNotIn('花之碎片',response[1])
         ultimate=self.plugin._db.create_task('12345',task_kind='ultimate',game='chunithm',song_id='s2',song_title='T2')
         self.assertTrue(ultimate.success)
         self.assertTrue(self.plugin._db.submit_task(ultimate.task_id,'12345').success)
@@ -187,16 +239,13 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(items['bloom_ticket'], 1)
 
-    async def test_economic_defaults_match_local_config(self):
-        import tomllib
-        from .balance_report import OLD
-        config_path=Path(__file__).parent/'config.toml'
-        if not config_path.is_file():
-            self.skipTest('本地 config.toml 不入库，全新检出时跳过默认值对照')
-        config=tomllib.loads(config_path.read_text(encoding='utf8'))
+    async def test_economic_defaults_match_webui_schema(self):
+        import json
+        schema=json.loads((Path(__file__).parent/'_conf_schema.json').read_text(encoding='utf8'))
         defaults=self.plugin.build_default_config()
-        for section,values in OLD.items():
-            for key in values:self.assertEqual(defaults[section][key],config[section][key],f'{section}.{key}')
+        for section,values in defaults.items():
+            for key,value in values.items():
+                self.assertEqual(value,schema[section]['items'][key]['default'],f'{section}.{key}')
         self.assertEqual(defaults['task']['ultimate_reward'],30000)
 
     async def test_catalog_points_pool_and_item_images(self):
@@ -223,6 +272,18 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
         self.sender.image.reset_mock()
         await self.dispatch('/礼物 购买 小 1','buy-item-image')
         self.sender.image.assert_awaited_once()
+        self.plugin._db._conn.execute('BEGIN IMMEDIATE')
+        change_item(self.plugin._db._conn, 'user', 'flower_fragment', 12)
+        self.plugin._db._conn.commit()
+        self.sender.image.reset_mock()
+        exchanged = await self.dispatch('/礼物 兑换 大 1','exchange-item-image')
+        self.assertIn('已兑换 大礼物 ×1', exchanged[1])
+        self.sender.image.assert_awaited_once()
+        before = self.plugin._growth.snapshot('user')
+        await self.dispatch('/礼物 兑换 大 1','exchange-item-image')
+        self.assertEqual(before, self.plugin._growth.snapshot('user'))
+        page = await self.dispatch('/礼物','exchange-inventory')
+        self.assertIn('12 花之碎片/份', page[1])
 
     async def test_bloom_command_sends_result_image(self):
         await self.dispatch('/伙伴 星咲 あかり','bloom-prep')

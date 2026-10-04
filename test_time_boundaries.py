@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from .gacha_db import GachaDatabase
 from .plugin import OngekiGachaPlugin
+from . import test_growth_service as fixtures
 
 
 class TimeBoundaryTests(unittest.TestCase):
@@ -71,6 +72,29 @@ class TimeBoundaryTests(unittest.TestCase):
 
     def test_monthly_remaining_is_never_negative(self):
         self.assertEqual(GachaDatabase.monthly_card_remaining_days('2026-09-20', '2026-09-23'), 0)
+
+
+class MonthlyEventTimeTests(unittest.TestCase):
+    setUpClass = classmethod(fixtures.GrowthServiceTests.setUpClass.__func__)
+    setUp = fixtures.GrowthServiceTests.setUp
+    tearDown = fixtures.GrowthServiceTests.tearDown
+
+    def test_ticket_starts_on_local_first_day_and_survives_restart(self):
+        original = GachaDatabase.current_date_str
+        clock = datetime(2026, 9, 30, 15, 59, 59, tzinfo=timezone.utc)
+        with patch.object(GachaDatabase, 'current_date_str', side_effect=lambda offset: original(offset, now_utc=clock)):
+            args = {**fixtures.CHECKIN_ARGS, 'tz_offset_hours': 8}
+            before = self.db.daily_checkin('u', **args)
+            self.assertEqual((before.date, before.bloom_tickets, before.small_gifts), ('2026-09-30', 0, 0))
+            clock = datetime(2026, 9, 30, 16, 0, tzinfo=timezone.utc)
+            first = self.db.daily_checkin('u', **args)
+            self.assertEqual((first.date, first.bloom_tickets, first.small_gifts), ('2026-10-01', 1, 1))
+            self.db.close()
+            self.db.open()
+            self.db.initialize_growth(self.cards, enabled=True, rules=self.catalog.rules)
+            self.assertFalse(self.db.daily_checkin('u', **args).success)
+        tickets = self.db._conn.execute("SELECT quantity FROM player_items WHERE qq_id='u' AND item_id='bloom_ticket'").fetchone()[0]
+        self.assertEqual(tickets, 1)
 
 
 if __name__ == '__main__':

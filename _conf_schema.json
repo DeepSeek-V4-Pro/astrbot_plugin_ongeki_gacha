@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本标记",
         "type": "string",
-        "default": "1.3.1",
+        "default": "1.3.2",
         "invisible": true
       }
     }
@@ -444,7 +444,7 @@
         "default": true
       },
       "voice_enabled": {
-        "description": "启用已通过自动校验的QQ角色语音；全部素材已自动验收，可手动关闭",
+        "description": "启用已通过校验的QQ角色语音；素材需自行接入并验收，可手动关闭",
         "type": "bool",
         "default": true
       },
@@ -475,39 +475,43 @@
       },
       "monthly_event_days": {
         "type": "int",
-        "default": 7,
-        "description": "每月签到活动天数"
+        "default": 10,
+        "description": "每月从1日开始的签到活动天数"
       },
       "monthly_event_small_gift_days": {
         "type": "list",
         "default": [
           1,
-          3
+          3,
+          6,
+          9
         ],
-        "description": "活动周发放小礼物的日期"
+        "description": "月初活动发放小礼物的日期"
       },
       "monthly_event_medium_gift_days": {
         "type": "list",
         "default": [
-          5
+          4,
+          8
         ],
-        "description": "活动周发放中礼物的日期"
+        "description": "月初活动发放中礼物的日期"
       },
       "monthly_event_large_gift_days": {
         "type": "list",
         "default": [
-          7
+          5,
+          10
         ],
-        "description": "活动周发放大礼物的日期"
+        "description": "月初活动发放大礼物的日期"
       },
       "monthly_event_fragments": {
         "type": "int",
-        "default": 5,
-        "description": "活动周其余日期发放的花之碎片"
+        "default": 2,
+        "description": "活动中无礼物或解花券的日期发放的花之碎片"
       },
       "task_medium_gifts_daily_cap": {
         "type": "int",
-        "default": 1,
+        "default": 3,
         "description": "任务中礼物每日上限"
       },
       "task_medium_gift_sources": {
@@ -520,7 +524,7 @@
       },
       "task_fragments_normal": {
         "type": "int",
-        "default": 1,
+        "default": 0,
         "description": "普通任务审核碎片"
       },
       "task_fragments_challenge": {
@@ -540,7 +544,7 @@
       },
       "task_fragments_daily_cap": {
         "type": "int",
-        "default": 2,
+        "default": 1,
         "description": "任务碎片每日上限"
       },
       "gift_purchase_small_price": {
@@ -641,6 +645,30 @@
         "type": "dict",
         "default": {},
         "description": "高级覆盖 rules_draft.json；留空表示使用上方具名配置与随包规则"
+      },
+      "monthly_event_bloom_ticket_days": {
+        "type": "list",
+        "default": [
+          1
+        ],
+        "description": "月初活动发放1张解花券的日期，可与礼物同日"
+      },
+      "task_small_gifts_daily_cap": {
+        "type": "int",
+        "default": 3,
+        "description": "任务小礼物每日上限"
+      },
+      "task_small_gift_sources": {
+        "type": "list",
+        "default": [
+          "normal"
+        ],
+        "description": "可发小礼物的任务类型"
+      },
+      "large_gift_fragment_price": {
+        "type": "int",
+        "default": 12,
+        "description": "兑换1份大礼物消耗的花之碎片，无兑换额度限制"
       }
     }
   },

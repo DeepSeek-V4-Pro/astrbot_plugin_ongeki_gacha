@@ -9,24 +9,13 @@
 所以本文列出的素材条目描述的是**这些素材在功能上的用途与整理方式**，
 不代表它们随项目分发，也不构成任何授权。
 
-## 2. 上游项目
+## 2. 软件许可与依赖
 
-### AquaViewer / RinNET
+项目代码采用 AGPL-3.0-or-later，完整文本见 [LICENSE](LICENSE)。
+抽卡展示与图层处理参考 AquaViewer / RinNET，卡池权重与静态定义参考 Artemis；
+这些项目采用 AGPL-3.0，相关部分须遵循各自许可。此声明仅说明代码与数据的许可归属。
 
-抽卡展示、图层处理和部分资源命名参考了 AquaViewer / RinNET 相关内容。
-上游以 GNU Affero General Public License v3 授权，完整文本见 [LICENSE](LICENSE)；
-使用、修改或分发相关部分时请遵守 AGPL-3.0 及上游许可要求。
-
-### Artemis
-
-卡池权重与静态卡池定义参考了 Artemis 的
-`titles/cm/cm_data/MU3/static_gachas.csv` 与 `static_gacha_cards.csv`。
-Artemis 以 GNU Affero General Public License v3 授权；本项目只从公开数据中提取
-卡池排期与权重字段，不以复制其运行代码为目的。
-
-### AstrBot / 上游插件
-
-本项目作为 AstrBot 插件运行，支持 OneBot 与 QQ 官方机器人适配器；AstrBot 及其依赖由部署者另行提供。业务逻辑改编自 MaiBot 版 `ongeki_gacha`，遵循其 AGPL-3.0-or-later 许可。
+AstrBot、Pillow 与 Pydantic 为运行依赖，分别遵循各自许可证。
 
 ## 3. SEGA 与第三方游戏素材
 

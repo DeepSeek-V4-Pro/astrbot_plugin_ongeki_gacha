@@ -15,7 +15,10 @@
 - 不同用户对素材使用范围和来源的授权情况不同；
 - 公开渠道中的成品图、缩略图与本地标准卡面（768×1052）并不等同。
 
-所有接入工具都是离线脚本：它们不下载、不解包、不调用网络，只处理你本地的文件。
+素材接入脚本只处理本地文件，不下载或解包游戏资源。插件运行时获取公开曲库、曲绘和公告图的网络功能另计。
+
+命令运行目录：`python tools/...` 在插件目录运行；`python -m astrbot_plugin_ongeki_gacha.tools...` 在插件父目录运行，插件文件夹需名为 `astrbot_plugin_ongeki_gacha`。
+下文模块命令中的输出路径已按父目录书写。运行 `verify_text_fallback` 还需要当前 Python 环境安装 `requirements.txt` 中的依赖。
 
 ## 1. 一分钟概览
 
@@ -63,11 +66,13 @@ assets/
    └─ voices/         档案语音与事件语音（自己接入）
 ```
 
-不想把卡面放进插件目录时，可以用 `--dest` 导入到别处，再改配置指向。养成图片、语音和界面素材仍按下表放在插件目录中：
+不想把素材放进插件目录时，可以用 `--dest` 导入到别处，再改配置指向：
 
-在 AstrBot WebUI 的 `assets.cards_dir` 与 `assets.card_info_json` 中填写本机绝对路径。
-数据库、配置分别位于 `data/plugin_data/astrbot_plugin_ongeki_gacha/` 和
-`data/config/astrbot_plugin_ongeki_gacha_config.json`。
+```toml
+[assets]
+cards_dir = "<你的素材目录>"
+card_info_json = "<你的素材目录>/card_info_merged.json"
+```
 
 ## 4. 素材来源
 
@@ -117,42 +122,7 @@ https://info-ongeki.sega.jp/wp-content/uploads/YYYY/MM/<hash>-219x300.png
 
 请自行遵守《利用規約》和账号安全要求。
 
-### 4.2 公开数据库与社区资料
-
-#### OTOGE DB
-
-- 地址：<https://otoge-db.net/ongeki/>
-
-OTOGE DB 是公开的曲目/谱面数据库，通常包含版本、曲名、难度等信息。它可以帮助你确认当前版本和新增曲目，但一般不是卡面图库。
-
-#### AquaDX / AquaNet 公开 API
-
-- 项目仓库：<https://github.com/MewoLab/AquaDX>
-- 公开实例：<https://aquadx.net>
-
-公开 API 可查询玩家排名、最近游玩记录和卡组 ID。例如：
-
-```text
-POST https://aquadx.net/aqua/api/v2/game/ongeki/user-summary
-POST https://aquadx.net/aqua/api/v2/game/ongeki/recent
-```
-
-通过该接口可以发现本地尚未收录的卡 ID，但接口**不提供“卡名 + 卡面”**的完整静态卡表。它只能帮助你确认：
-
-- 某 ID 是否真实出现在实机数据中；
-- 出现日期、活动、曲目和卡组位置；
-- 哪些 ID 仍缺少本地素材。
-
-AquaDX 是社区项目，不是 SEGA 官方服务；使用时请自行确认访问权限、条款和素材用途。
-
-#### Artemis / 公开静态数据仓库
-
-- 仓库中的 `static_gachas.csv`、`static_gacha_cards.csv` 等公开数据可用于梳理卡池日期、UP、选择卡和权重。
-- 仓库中的 `game_card.json`、`game_chara.json` 通常只包含元数据，不包含 PNG/WebP 卡面。
-
-公开仓库只能用于查阅元数据和实现本地逻辑，不代表你可以直接复制、分发其中涉及的受版权保护素材。
-
-### 4.3 本地已有素材
+### 4.2 本地已有素材
 
 如果你已经持有合法来源的卡面或更新包，可以按下面的顺序检查，再决定怎么接入：
 
@@ -195,7 +165,7 @@ python tools/card_asset_tools.py scan --source .\素材目录
 
 ```text
 ui_card_100001.png                              成品卡面
-UI_Card_Chara_100001_P.webp                     RinNET 角色 P 图层
+UI_Card_Chara_100001_P.webp                     角色 P 图层
 ui_card_chara_100001_p.png                      解包后的角色 P 图层
 ui_card_chara_100001.png                        普通角色图层
 ```
@@ -225,7 +195,7 @@ python tools/card_asset_tools.py compose `
 不含动态 HUD、holo、星级、解花标记和底部 ID 条（插件渲染时会自己叠加 ID 条）。
 不需要卡名文字可加 `--skip-text`；只合成部分 ID 用 `--ids 100001,100002`。
 
-想更接近上游排版时，可用浏览器版（需要 Playwright，脚本会自动使用本机 Edge/Chrome）：
+需要浏览器排版时，可用浏览器版（需要 Playwright，脚本会自动使用本机 Edge/Chrome）：
 
 ```powershell
 python tools/compose_card_art.py `
@@ -308,13 +278,13 @@ NotoSansCJKsc-Bold.otf
 
 ```powershell
 python -m astrbot_plugin_ongeki_gacha.tools.build_growth_assets `
-  --source <提取目录> --output assets\growth
+  --source <提取目录> --output astrbot_plugin_ongeki_gacha\assets\growth
 python -m astrbot_plugin_ongeki_gacha.tools.build_growth_theme
 ```
 
 `build_growth_assets` 会把白名单素材复制到 `assets/growth/images/` 并写出
 `visual_asset_manifest.json`（逐项记录来源、尺寸与 SHA-256）；
-`build_growth_theme` 从角色立绘取色生成 `character_theme.json`，不需要参数。
+`build_growth_theme` 使用原始奖励附件标注的角色专属 RGB 色值生成 `character_theme.json`，不需要参数。
 缺少这些图片时，好感页、奖励页与解花对照图会自动退化为文字卡片。
 
 ## 9. 语音
@@ -324,16 +294,16 @@ python -m astrbot_plugin_ongeki_gacha.tools.build_growth_theme
 
 ```powershell
 python -m astrbot_plugin_ongeki_gacha.tools.build_affection_voice_assets `
-  --source <提取目录>\voice_extracted --output assets\growth
+  --source <提取目录>\voice_extracted --output astrbot_plugin_ongeki_gacha\assets\growth
 python -m astrbot_plugin_ongeki_gacha.tools.build_event_voice_assets `
-  --source <提取目录>\event_voice_extracted --output assets\growth
+  --source <提取目录>\event_voice_extracted --output astrbot_plugin_ongeki_gacha\assets\growth
 ```
 
-打包后先做一次自动校验（解码、时长、响度、散列），确认无误再写入验收状态：
+打包后先做一次自动校验（解码、时长、响度、散列），确认无误再写入验收状态。自动校验不替代人工听感检查：
 
 ```powershell
-python -m astrbot_plugin_ongeki_gacha.tools.review_voice_assets --root . --report temp\voice_review.json
-python -m astrbot_plugin_ongeki_gacha.tools.review_voice_assets --root . --approve
+python -m astrbot_plugin_ongeki_gacha.tools.review_voice_assets --root astrbot_plugin_ongeki_gacha --report astrbot_plugin_ongeki_gacha\temp\voice_review.json
+python -m astrbot_plugin_ongeki_gacha.tools.review_voice_assets --root astrbot_plugin_ongeki_gacha --approve
 ```
 
 只有 `listening_review == "verified"` 的语音才会发送；想先接入但不发语音，
@@ -349,7 +319,7 @@ python -m astrbot_plugin_ongeki_gacha.tools.verify_growth_install
 # 无素材兜底（复制一份不含二进制的副本实际跑一轮命令）
 python -m astrbot_plugin_ongeki_gacha.tools.verify_text_fallback
 
-# 卡面接入结果
+# 卡面接入结果（切回插件目录后运行）
 python tools/card_asset_tools.py verify
 ```
 
@@ -368,8 +338,8 @@ python tools/card_asset_tools.py verify
 
 - **为什么不随插件提供全部卡面？** 版权不属于项目代码，且公开渠道中的成品图、缩略图和本地标准图层
   并不总是等价；维护者不能替用户确认其获取、复制和使用素材的权限。
-- **插件不加载，提示卡牌索引不可用**：先跑 `python tools/sync_card_data.py` 生成
-  `assets/card_data/card_info_merged.json`；卡面可以之后再接。
+- **插件不加载，提示卡牌索引不可用**：检查配置路径；缺少 `assets/card_data/card_info_merged.json` 时，
+  从同版本插件包补齐随包索引。同步卡面脚本不能重建完整卡牌索引，卡面可以之后再接。
 - **已经有 `card_info_merged.json`，为什么还提示卡图缺失？** 元数据 JSON 不需要图片；
   显示 `/卡图` 和合成抽卡结果才需要 `ui_card_*.png`。请检查 `assets/card_data/`
   目录或 `assets.cards_dir` 配置。
@@ -380,7 +350,7 @@ python tools/card_asset_tools.py verify
 - **官方宣传图可以直接用来做卡面吗？** 通常不建议。官方宣传图可能经过裁切、合成、缩小或加文字/边框，
   尺寸也不一定是 768×1052。它适合做预览、对照和确认，不应直接伪装成完整标准卡面。
 - **我已确认有权限，应该放哪些文件？** 建议直接使用
-  `tools/card_asset_tools.py import --source <素材目录>`，
+  `python tools/card_asset_tools.py import --source <素材目录>`，
   脚本会自动识别/重命名、转换尺寸、更新 `imagePresent` 并重建校验清单；
   也可以手动按 `ui_card_<6位ID>.png` 命名放入 `assets/card_data/`。
 

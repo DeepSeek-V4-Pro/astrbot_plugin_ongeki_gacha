@@ -19,7 +19,7 @@
 
 ```text
 ui_card_100001.png                              成品卡面
-UI_Card_Chara_100001_P.webp                     RinNET 角色 P 图层
+UI_Card_Chara_100001_P.webp                     角色 P 图层
 ui_card_chara_100001_p.png                      本地解包后的角色 P 图层
 ui_card_chara_100001.png                        普通角色图层
 ```
@@ -80,7 +80,7 @@ python card_asset_tools.py compose `
 
 - 包含背景、边框、属性/稀有度/学年图标和近似的卡名文字；
 - 不包含动态 HUD、holo、星级、解花标记和底部 ID 信息条；
-- 不等同于 RinNET 前端逐像素复刻。
+- 合成结果用于本地展示，不保证与游戏画面逐像素一致。
 
 如果不需要卡名文字，可加 `--skip-text`：
 
@@ -95,10 +95,9 @@ python card_asset_tools.py compose `
 如果暂时没有通用图层，只想检查角色图，可使用 `--allow-raw` 直接导出角色图；
 但插件默认标准卡面需要背景和边框，建议只在临时预览时使用。
 
-### 2.1 浏览器版合成（复用上游拼接逻辑）
+### 2.1 浏览器版合成
 
-此前验证过的上游合成脚本采用浏览器叠加图层的方式，对字体、卡名旋转和
-图层顺序的还原更接近上游展示。插件内附的对应脚本是 `compose_card_art.py`：
+`compose_card_art.py` 使用浏览器叠加图层，处理字体、卡名旋转和图层顺序：
 
 ```powershell
 python compose_card_art.py `
