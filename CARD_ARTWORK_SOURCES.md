@@ -2,7 +2,7 @@
 
 本插件只负责本地模拟、展示和抽卡逻辑。**卡面 PNG、角色图层、UI 素材及卡牌元数据均不属于插件代码的 LICENSE 范围**，其权利归 SEGA、相关角色或素材权利人所有。
 
-插件发布包通常不附带全部高清卡面。原因是：
+插件发布包不附带卡面、界面图片、字体或音频素材。原因是：
 
 - 版权归属不随插件代码授权；
 - 发布包体积过大；
@@ -107,7 +107,7 @@ AquaDX 是社区项目，不是 SEGA 官方服务；使用时请自行确认访�
 python sync_card_data.py --check
 ```
 
-如果目录中没有 `ui_card_*.png`，插件会提示“卡牌数据不可用”。
+缺少 `ui_card_*.png` 只影响卡面展示，抽卡与养成仍可使用文字；缺少或无法读取 `card_info_merged.json` 才会导致卡牌数据不可用。
 
 ### 3.2 使用你自己的素材目录
 
@@ -120,10 +120,15 @@ python sync_card_data.py `
 
 也可以在插件配置中修改：
 
-```toml
-[assets]
-cards_dir = "./path/to/cards"
-card_info_json = "./path/to/card_info_merged.json"
+在 AstrBot WebUI 的插件配置中填写 `assets`，JSON 示例：
+
+```json
+{
+  "assets": {
+    "cards_dir": "./path/to/cards",
+    "card_info_json": "./path/to/card_info_merged.json"
+  }
+}
 ```
 
 ### 3.3 处理本地已有的游戏/更新包

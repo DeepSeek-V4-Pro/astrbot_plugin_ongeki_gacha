@@ -68,10 +68,15 @@ assets/
 
 不想把素材放进插件目录时，可以用 `--dest` 导入到别处，再改配置指向：
 
-```toml
-[assets]
-cards_dir = "<你的素材目录>"
-card_info_json = "<你的素材目录>/card_info_merged.json"
+在 AstrBot WebUI 的插件配置中填写 `assets`，JSON 示例：
+
+```json
+{
+  "assets": {
+    "cards_dir": "<你的素材目录>",
+    "card_info_json": "<你的素材目录>/card_info_merged.json"
+  }
+}
 ```
 
 ## 4. 素材来源
@@ -137,13 +142,18 @@ python tools/sync_card_data.py `
   --check
 ```
 
-如果目录中没有 `ui_card_*.png`，插件会提示“卡牌数据不可用”。
+缺少 `ui_card_*.png` 只影响卡面展示，抽卡与养成仍可使用文字；缺少或无法读取 `card_info_merged.json` 才会导致卡牌数据不可用。
 也可以在插件配置中修改：
 
-```toml
-[assets]
-cards_dir = "./path/to/cards"
-card_info_json = "./path/to/card_info_merged.json"
+在 AstrBot WebUI 的插件配置中填写 `assets`，JSON 示例：
+
+```json
+{
+  "assets": {
+    "cards_dir": "./path/to/cards",
+    "card_info_json": "./path/to/card_info_merged.json"
+  }
+}
 ```
 
 自行处理本地游戏包、更新包或解包中间文件时，请遵守：

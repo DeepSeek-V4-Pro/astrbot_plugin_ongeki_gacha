@@ -189,10 +189,15 @@ python card_asset_tools.py import `
   --dest .\my_card_data
 ```
 
-```toml
-[assets]
-cards_dir = "<你的素材目录>"
-card_info_json = "<你的素材目录>/card_info_merged.json"
+在 AstrBot WebUI 的插件配置中填写 `assets`，JSON 示例：
+
+```json
+{
+  "assets": {
+    "cards_dir": "<你的素材目录>",
+    "card_info_json": "<你的素材目录>/card_info_merged.json"
+  }
+}
 ```
 
 ### 4. 校验
