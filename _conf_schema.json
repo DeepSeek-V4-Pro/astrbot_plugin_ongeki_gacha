@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本",
         "type": "string",
-        "default": "1.3.3",
+        "default": "1.3.4",
         "invisible": true
       }
     }
@@ -303,7 +303,7 @@
         }
       },
       "challenge_min_level": {
-        "description": "挑战最低等级，默认 10 级或以上",
+        "description": "挑战最低谱面定数，默认 10.0",
         "type": "float",
         "default": 10.0,
         "slider": {
@@ -735,6 +735,100 @@
         "type": "int",
         "default": 700,
         "description": "短回复直接发文字的最大字符数"
+      }
+    }
+  },
+  "preview": {
+    "description": "曲目预览与终极任务自动长语音",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "default": true,
+        "description": "启用曲库限定的QQ语音试听"
+      },
+      "automatic_ultimate": {
+        "type": "bool",
+        "default": true,
+        "description": "终极任务接取后自动试听，失败静默"
+      },
+      "providers": {
+        "type": "list",
+        "default": [
+          "netease_api",
+          "netease",
+          "meting_tencent",
+          "meting_kugou",
+          "meting_kuwo",
+          "meting_netease",
+          "deezer"
+        ],
+        "description": "按顺序尝试音源；Meting与网易云登录接口需配置地址，Deezer仅提供短试听"
+      },
+      "netease_api_url": {
+        "type": "string",
+        "default": "",
+        "description": "自建NeteaseCloudMusicApiEnhanced地址，如http://127.0.0.1:3000；留空跳过登录接口"
+      },
+      "netease_cookie": {
+        "type": "string",
+        "default": "",
+        "description": "网易云登录Cookie，仅POST到netease_api_url；留空使用接口服务端登录态"
+      },
+      "meting_api_url": {
+        "type": "string",
+        "default": "",
+        "description": "自建metowolf/Meting-API完整端点，如http://127.0.0.1:3001/api；各平台Cookie在该服务端配置"
+      },
+      "allow_preview_fallback": {
+        "type": "bool",
+        "default": false,
+        "description": "全部完整音源失败后是否发送明确标注的短试听片段"
+      },
+      "max_duration_seconds": {
+        "type": "int",
+        "default": 1200,
+        "description": "音频最长秒数，默认20分钟；超限拒绝发送，不截断"
+      },
+      "ffmpeg_path": {
+        "type": "string",
+        "default": "",
+        "description": "FFmpeg路径；留空使用PATH或imageio-ffmpeg"
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "default": 15,
+        "description": "单次元数据请求超时秒数"
+      },
+      "download_timeout_seconds": {
+        "type": "int",
+        "default": 60,
+        "description": "单次音频下载超时秒数"
+      },
+      "total_timeout_seconds": {
+        "type": "int",
+        "default": 180,
+        "description": "所有音源搜索下载的总预算秒数，另预留60秒转码"
+      },
+      "send_timeout_seconds": {
+        "type": "int",
+        "default": 90,
+        "description": "QQ图片或长语音发送超时秒数"
+      },
+      "cooldown_seconds": {
+        "type": "int",
+        "default": 10,
+        "description": "同账号试听请求间隔秒数"
+      },
+      "cache_ttl_seconds": {
+        "type": "int",
+        "default": 86400,
+        "description": "音频缓存保留秒数，缓存总量不超过256MiB"
+      },
+      "max_download_bytes": {
+        "type": "int",
+        "default": 67108864,
+        "description": "单个音源下载上限字节数"
       }
     }
   }

@@ -222,5 +222,59 @@ class SendAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+
+@unittest.skipIf(Comp is None, '需要 AstrBot 框架环境')
+class PreviewDispatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_event_dispatch_consumes_command_and_sends_only_media(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+        from .plugin import OngekiGachaPlugin
+        from .song_preview import PreparedPreview
+        from .test_song_preview import song, wav
+        import logging
+        with tempfile.TemporaryDirectory() as folder:
+            star = OngekiGachaStar.__new__(OngekiGachaStar)
+            star.data_dir = Path(folder)
+            star._inner = OngekiGachaPlugin()
+            star._inner.set_plugin_config(star._inner.build_default_config())
+            star._inner.config.preview.cooldown_seconds = 0
+            star._inner._user_id = lambda kw: kw['user_id']
+            star._inner._get_task_catalog = AsyncMock(return_value=[song()])
+            service = Mock()
+            service.prepare.return_value = PreparedPreview(wav(2), 'test', 2, False, True)
+            service.cover.return_value = b'original game jacket'
+            service.voice.return_value = b'ID3compressed song'
+            star._inner._preview_service = lambda: service
+            star._inner._set_context(SimpleNamespace(paths=SimpleNamespace(runtime_dir=Path(folder)),
+                send=AstrBotSend(star), logger=logging.getLogger('astr-preview-dispatch')))
+            star._commands = star._collect_commands()
+            for index, text in enumerate(('/曲目预览 音击 Test | Singer', '曲目预览 音击\tTest | Singer')):
+                class Event:
+                    message_str = text
+                    message_obj = SimpleNamespace(message_id=str(index), raw_message=None)
+                    unified_msg_origin = 'qq_official:GroupMessage:group'
+                    stopped = False
+                    def get_sender_id(self): return 'openid-user'
+                    def get_self_id(self): return 'qq_official'
+                    def get_platform_name(self): return 'qq_official'
+                    def get_messages(self): return []
+                    def stop_event(self): self.stopped = True
+                    async def send(self, chain):
+                        self.sent.append(chain)
+                        for item in chain.chain:
+                            if isinstance(item, Comp.Record):
+                                assert Path(item.path).suffix == '.mp3'
+                                assert Path(item.path).read_bytes() == b'ID3compressed song'
+                event = Event()
+                event.sent = []
+                await star.on_message(event)
+                self.assertTrue(event.stopped)
+                self.assertEqual(len(event.sent), 2)
+                self.assertIsInstance(event.sent[0].chain[0], Comp.Image)
+                self.assertIsInstance(event.sent[1].chain[0], Comp.Record)
+                self.assertIsNone(star.current_event())
+            self.assertEqual(list(Path(folder).glob('runtime/voice_*')), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,7 @@ def Command(
     description: str = "",
     pattern: Optional[str] = None,
     aliases: Optional[list[str]] = None,
+    **metadata: Any,
 ) -> Callable:
     """标记一个命令处理器。
 
@@ -67,6 +68,7 @@ def Command(
             "description": description,
             "pattern": re.compile(pattern) if pattern else None,
             "aliases": list(aliases or []),
+            **metadata,
         }
         return func
 
@@ -123,6 +125,7 @@ class MaiBotPlugin:
                             ),
                             "aliases": list(meta.get("aliases") or []),
                             "handler_name": getattr(value, "__name__", name),
+                            "timeout_ms": meta.get("timeout_ms", 0),
                         },
                     }
                 )

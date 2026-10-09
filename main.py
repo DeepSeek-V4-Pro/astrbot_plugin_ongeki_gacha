@@ -15,6 +15,7 @@ import base64
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -94,7 +95,7 @@ class AstrBotSend:
         sent = await self._star._send_chain(MessageChain().message(text))
         return {"success": sent}
 
-    async def image(self, image: str, stream_id: str = "") -> dict:
+    async def image(self, image: str, stream_id: str = "", *, rpc_timeout_ms: int | None = None) -> dict:
         """发送图片；参数为 base64 图片、http 链接或本地路径。"""
         del stream_id
         if image.startswith(("http://", "https://")):
@@ -106,7 +107,7 @@ class AstrBotSend:
         sent = await self._star._send_chain(chain)
         return {"success": sent}
 
-    async def custom(self, custom_type: str, data: str, stream_id: str = "") -> dict:
+    async def custom(self, custom_type: str, data: str, stream_id: str = "", *, rpc_timeout_ms: int | None = None) -> dict:
         """custom 能力：目前用于发送语音（voice）。
 
         AstrBot 的 ``Record`` 组件会按平台转换格式：QQ 官方机器人需要
@@ -129,25 +130,35 @@ class AstrBotSend:
             payload = base64.b64decode(raw)
         except Exception:
             logger.warning("语音数据解析失败，未发送")
-            return {"success": False}
+            return {"success": False, "error": "语音Base64数据无效"}
         if not payload:
             logger.warning("语音数据为空，未发送")
-            return {"success": False}
+            return {"success": False, "error": "语音数据为空"}
         runtime = self._star.data_dir / "runtime"
         runtime.mkdir(parents=True, exist_ok=True)
-        path = runtime / f"voice_{int(time.time() * 1000)}.wav"
+        suffix = ".wav" if payload.startswith(b"RIFF") else ".mp3"
+        path = runtime / f"voice_{uuid.uuid4().hex}{suffix}"
         try:
             path.write_bytes(payload)
         except OSError:
             logger.exception("语音临时文件写入失败")
-            return {"success": False}
+            return {"success": False, "error": "语音临时文件写入失败"}
         try:
             chain = MessageChain(chain=[Comp.Record.fromFileSystem(str(path))])
         except Exception:
             logger.exception("语音组件构造失败")
-            return {"success": False}
-        sent = await self._star._send_chain(chain)
-        return {"success": sent}
+            path.unlink(missing_ok=True)
+            return {"success": False, "error": "AstrBot语音组件构造失败"}
+        try:
+            sent = await self._star._send_chain(chain)
+            return {"success": sent, **({} if sent else {"error": "平台适配器转码或发送失败，请查看AstrBot日志"})}
+        finally:
+            # send 已完成上传或失败；长语音临时副本不长期堆积，源缓存另有容量限制。
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("语音临时文件仍被适配器占用，稍后清理")
+
 
     async def forward(self, nodes: list[dict], stream_id: str = "") -> dict:
         """发送合并转发；不支持合并转发的平台降级为结构化文本。"""

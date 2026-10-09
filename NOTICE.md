@@ -17,6 +17,13 @@
 
 AstrBot、Pillow 与 Pydantic 为运行依赖，分别遵循各自许可证。
 
+### 曲目预览音源与转码
+
+曲目预览可连接网易云公开接口、用户配置的 NeteaseCloudMusicApiEnhanced / Meting-API，以及可选 Deezer 短试听。
+这些外部服务与音乐素材不属于本插件，接入说明见 [曲目预览配置](MUSIC_PREVIEW.md)。
+音频与曲绘仅在运行时获取和缓存，不随代码仓库分发；配置中的登录信息也不得提交到仓库。
+`imageio-ffmpeg` 提供 FFmpeg 可执行程序，或由使用者配置已有 FFmpeg；遵循这些依赖各自的许可。
+
 ## 3. SEGA 与第三方游戏素材
 
 音击相关的名称、商标、角色、卡面、UI、音频及其他素材，权利均归 SEGA 或相应权利人所有，

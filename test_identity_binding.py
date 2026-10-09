@@ -74,7 +74,7 @@ class IdentityBindingTests(unittest.TestCase):
         self.db.get_player("123456")
         conn = self.db._conn
         conn.execute(
-            "INSERT INTO ultimate_completed_charts VALUES(?, ?, ?, ?, ?)",
+            "INSERT INTO ultimate_completed_charts(qq_id,game,song_id,difficulty_index,completed_at) VALUES(?, ?, ?, ?, ?)",
             ("123456", "ongeki", "song", 3, "2026-09-23"),
         )
         conn.execute(
@@ -96,6 +96,15 @@ class IdentityBindingTests(unittest.TestCase):
                 conn.execute(f"SELECT COUNT(*) FROM {table} WHERE qq_id='123456'").fetchone()[0],
                 0,
             )
+
+    def test_bind_preserves_maimai_chart_types(self):
+        self.db.get_player("123456")
+        for variant in ("standard", "dx"):
+            self.db._conn.execute("INSERT INTO ultimate_completed_charts VALUES(?,?,?,?,?,?)",
+                                  ("123456", "maimai", "1", 3, "old", variant))
+        self.assertTrue(self.db.bind_identity("openid-abc", "123456")[0])
+        self.assertEqual(self.db.get_ultimate_completed_keys("openid-abc"),
+                         {"maimai:1:standard:3", "maimai:1:dx:3"})
 
     def test_alias_rebinding_merges_into_canonical_account(self):
         self.db.get_player("user-a")
