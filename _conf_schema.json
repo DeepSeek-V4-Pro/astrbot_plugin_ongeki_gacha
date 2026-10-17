@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本",
         "type": "string",
-        "default": "1.3.4",
+        "default": "1.3.5",
         "invisible": true
       }
     }
@@ -784,6 +784,11 @@
         "type": "bool",
         "default": false,
         "description": "全部完整音源失败后是否发送明确标注的短试听片段"
+      },
+      "compress_media": {
+        "type": "bool",
+        "default": true,
+        "description": "压缩预览曲绘与语音；关闭时发送原图和未压缩WAV，体积更大，可能发送失败"
       },
       "max_duration_seconds": {
         "type": "int",

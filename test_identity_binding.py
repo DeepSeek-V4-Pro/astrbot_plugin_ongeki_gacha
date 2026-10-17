@@ -196,8 +196,8 @@ class IdentityBindingTests(unittest.TestCase):
         self.assertIsNone(match.group("target_id"))
         self.assertIsNone(match.group("target_at"))
 
-        numbered = pattern.match("/奖励 3130274394 10")
-        self.assertEqual(numbered.group("target_id"), "3130274394")
+        numbered = pattern.match("/奖励 1234567890 10")
+        self.assertEqual(numbered.group("target_id"), "1234567890")
         self.assertEqual(numbered.group("amount"), "10")
 
         noted = pattern.match("/奖励 10 备注")
@@ -270,8 +270,8 @@ class IdentityBindingTests(unittest.TestCase):
         plugin.set_plugin_config(plugin.build_default_config())
         pattern = OngekiGachaPlugin.handle_grant_points._mai_command["pattern"]
         kwargs = {
-            "text": "/奖励 313027439410",
-            "matched_groups": pattern.match("/奖励 313027439410").groupdict(),
+            "text": "/奖励 123456789010",
+            "matched_groups": pattern.match("/奖励 123456789010").groupdict(),
         }
         self.assertIsNone(plugin._parse_grant(kwargs))
 
