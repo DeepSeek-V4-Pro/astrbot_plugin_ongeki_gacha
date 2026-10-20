@@ -12,7 +12,7 @@
       "config_version": {
         "description": "配置版本",
         "type": "string",
-        "default": "1.3.5",
+        "default": "1.3.6",
         "invisible": true
       }
     }
@@ -71,15 +71,15 @@
         "hint": "默认读取插件 assets/card_data/gacha_pools.json。"
       },
       "rotation_mode": {
-        "description": "卡池选择模式",
+        "description": "卡池模式：official=按几月几日复现历史官方池（默认）；cycle=按间隔循环历史官方池",
         "type": "string",
-        "default": "cycle",
-        "hint": "official=按几月几日复现历史官方池（忽略年份）；cycle=按间隔循环历史官方池。"
+        "default": "official",
+        "hint": "official 与官方约一个月的档期一致；cycle 模式只在需要固定天数轮换时使用。"
       },
       "rotation_interval_days": {
-        "description": "cycle 模式下每个池的持续天数",
+        "description": "cycle 模式下每个池的持续天数；official 模式不生效",
         "type": "int",
-        "default": 15,
+        "default": 30,
         "slider": {
           "min": 1,
           "max": 30,
@@ -164,14 +164,14 @@
         "default": 600
       },
       "streak_cycle_days": {
-        "description": "每连续签到多少天发放卡池周期奖励",
+        "description": "每连续签到多少天发放卡池周期奖励（默认按一个月 30 天）",
         "type": "int",
-        "default": 15
+        "default": 30
       },
       "streak_cycle_reward": {
-        "description": "卡池周期奖励点数",
+        "description": "卡池周期奖励点数；30 天一发，日均与旧版 15 天档一致",
         "type": "int",
-        "default": 1200
+        "default": 2400
       },
       "non_gacha_checkin_probability": {
         "description": "每日签到随机获得非抽卡卡的概率（0～1）",
@@ -786,9 +786,20 @@
         "description": "全部完整音源失败后是否发送明确标注的短试听片段"
       },
       "compress_media": {
-        "type": "bool",
-        "default": true,
-        "description": "压缩预览曲绘与语音；关闭时发送原图和未压缩WAV，体积更大，可能发送失败"
+        "type": "string",
+        "default": "full",
+        "options": [
+          "none",
+          "half",
+          "full"
+        ],
+        "description": "预览压缩档位：none=原图原WAV；half=较高码率优先音质，超限只保留开头可容纳部分；full=全长自适应低码率",
+        "hint": "旧配置的 true/false 会自动按 full/none 处理。"
+      },
+      "half_bitrate_kbps": {
+        "type": "int",
+        "default": 64,
+        "description": "half 档位的 MP3 码率（kbps）：越高音质越好、可发送时长越短"
       },
       "max_duration_seconds": {
         "type": "int",

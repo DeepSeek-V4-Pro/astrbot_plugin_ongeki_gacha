@@ -526,8 +526,7 @@ class TaskCommandsMixin:
             return True, text, True
         if task.task_kind != "ultimate" or task.qq_id != target_id:
             text = (
-                "该任务不是该用户的终极任务"
-                "（/终极完成 <QQ号> <任务ID>，ID 见 /任务列表）"
+                "该任务不是该用户的终极任务｜/终极完成 <QQ号> <任务ID>"
             )
             await self._send_text(stream_id, text)
             return True, text, True

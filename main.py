@@ -262,8 +262,15 @@ class OngekiGachaStar(Star):
         self._inner = OngekiGachaPlugin()
         self._inner.ctx = AstrBotCtx(self)
         self._inner.config = parsed
+        # 升级后按配置模型补齐 AstrBot 的 JSON 配置（保留用户已有值）。
+        self._inner._config_sync_targets = [self._config_file_path()]
 
         self._commands: list[dict] = self._collect_commands()
+
+    def _config_file_path(self) -> Path:
+        """AstrBot 保存插件配置的位置：<data>/config/<插件名>_config.json。"""
+        name = getattr(self, "name", None) or "astrbot_plugin_ongeki_gacha"
+        return self.data_dir.parent.parent / "config" / f"{name}_config.json"
 
     # ---- 生命周期 ----
 
