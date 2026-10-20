@@ -64,7 +64,7 @@
 
 ### 1.3.5 → 1.3.6 补充说明
 
-本次是兼容更新，替换代码与 JSON 索引后重新加载即可，数据库和素材目录都不用重建。首次加载会自动补齐 `data/config/astrbot_plugin_ongeki_gacha_config.json` 里缺的键，并把整组仍是旧默认值的配置升级到新默认值，改写前生成时间戳备份。
+本次是兼容更新，替换代码与 JSON 索引后重新加载即可，数据库和素材目录都不用重建。首次加载只做数值层面的升级：补 `preview.half_bitrate_kbps` 这类缺失的数值键，把 `economy.streak_cycle_days` / `streak_cycle_reward` 调到 30 天/2400，`compress_media` 的旧布尔值按 `full`/`none` 写回；管理员列表、音源顺序、接口地址、Cookie、素材路径等一律不动，缺了也只用运行期默认值。改写前生成时间戳备份。
 
 ```json
 {
