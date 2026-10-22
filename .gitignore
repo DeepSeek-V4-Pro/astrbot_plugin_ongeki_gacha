@@ -25,5 +25,7 @@ assets/growth/**/*.jpg
 assets/growth/**/*.wav
 assets/growth/**/*.mp3
 assets/growth/**/*.ogg
+assets/growth/*.backup.*
+assets/growth/build_report.json
 /artifacts/
 /dist/

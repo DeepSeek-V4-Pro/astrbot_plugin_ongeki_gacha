@@ -305,7 +305,7 @@ def main() -> int:
             f"FAIL: 默认/指定卡面目录不存在: {source_cards}\n"
             "插件发布包不附带受版权保护的卡面。请将已有合法卡面放入 "
             "assets/card_data/，或通过 --source 指定自己的素材目录；"
-            "具体说明见 CARD_ARTWORK_SOURCES.md。",
+            "具体说明见 ASSETS.md。",
             file=sys.stderr,
         )
         return 1
