@@ -106,10 +106,24 @@ class PluginGrowthTests(unittest.IsolatedAsyncioTestCase):
         self.sender.text.assert_not_awaited()
         self.sender.text.reset_mock();self.sender.image.reset_mock()
         await self.dispatch('/帮助','help')
-        self.sender.text.assert_awaited()
-        self.sender.image.assert_not_awaited()
+        self.sender.image.assert_awaited()
+        self.sender.text.assert_not_awaited()
         self.assertTrue(self.plugin._is_short_reply(['一行回执'],'一行回执'))
         self.assertFalse(self.plugin._is_short_reply(['第 %d 行' % i for i in range(11)],'短'))
+
+    async def test_help_falls_back_to_text_without_font(self):
+        """缺字体时 /帮助 仍要给出完整的命令速查。"""
+        self.sender.text.reset_mock();self.sender.image.reset_mock()
+        ready=self.plugin._render_ready
+        self.plugin._render_ready=False
+        try:
+            response=await self.dispatch('/帮助','help-fallback')
+        finally:
+            self.plugin._render_ready=ready
+        self.assertTrue(response[0])
+        self.assertIn('/签到',response[1])
+        self.sender.text.assert_awaited()
+        self.sender.image.assert_not_awaited()
 
     async def test_hot_reload_preserves_voice_limiter_and_unload_releases(self):
         voice=self.plugin._voice;voice._attempts['user'].append(123)

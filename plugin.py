@@ -1614,8 +1614,12 @@ class OngekiGachaPlugin(CompensationCommandsMixin, PreviewCommandsMixin, GrowthC
         text: str,
         *,
         title: str = "音击抽卡模拟器",
+        force_image: bool = False,
     ) -> bool:
         """短回复直接发文字，长内容渲染分页图片，失败时回退纯文本。
+
+        force_image 用于命令速查这类固定排版的内容（如 /帮助）：它们即使
+        行数不多也按图片卡片发送，不受短回复阈值影响。缺字体时仍会回退文字。
 
         返回是否以纯文本形式送达：调用方据此决定要不要再补发一份可复制的
         指令提示，避免同一批内容发两遍。
@@ -1623,7 +1627,7 @@ class OngekiGachaPlugin(CompensationCommandsMixin, PreviewCommandsMixin, GrowthC
         lines = str(text or "").splitlines()
         if not any(line.strip() for line in lines):
             return False
-        if self._is_short_reply(lines, str(text or "")):
+        if not force_image and self._is_short_reply(lines, str(text or "")):
             await self._send_plain_text(stream_id, text)
             return True
         if await self._send_text_card(stream_id, title, lines):
@@ -3183,10 +3187,15 @@ class OngekiGachaPlugin(CompensationCommandsMixin, PreviewCommandsMixin, GrowthC
 
     @Command("ongeki_help", description="显示命令与玩法帮助", pattern=r"^/帮助\s*$")
     async def handle_help(self, stream_id: str = "", **kwargs: dict[str, Any]) -> tuple[bool, str, bool]:
-        """显示帮助信息。"""
+        """以图片卡片显示命令速查；缺字体时回退文字。"""
         del kwargs
         text = self._help_text()
-        await self._send_text(stream_id, text)
+        await self._send_text(
+            stream_id,
+            text,
+            title="音击抽卡模拟器 · 帮助",
+            force_image=True,
+        )
         return True, text, True
 
 
