@@ -793,7 +793,7 @@
           "half",
           "full"
         ],
-        "description": "预览压缩档位：none=原图原WAV；half=较高码率优先音质，超限只保留开头可容纳部分；full=全长自适应低码率",
+        "description": "预览压缩档位：none=原WAV（曲绘所有档位均发送原图）；half=较高码率优先音质，超限只保留开头可容纳部分；full=全长自适应低码率",
         "hint": "旧配置的 true/false 会自动按 full/none 处理。"
       },
       "half_bitrate_kbps": {

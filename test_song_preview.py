@@ -56,7 +56,7 @@ class IdentityTests(unittest.TestCase):
                                 ('Test', ('Other', 'Third'))]:
             self.assertFalse(sp.PreviewTrack('p', title, artists, '', '').matches(song()))
         # 音源追加嘉宾或给歌手名加括号注解时，只要主唱对得上就接受。
-        self.assertTrue(sp.PreviewTrack('p', 'Test', ('Singer', 'Guest'), '', '').matches(song()))
+        self.assertFalse(sp.PreviewTrack('p', 'Test', ('Singer', 'Guest'), '', '').matches(song()))
         self.assertTrue(sp.PreviewTrack('p', 'Test', ('Singer (CV:X)',), '', '').matches(song()))
         self.assertTrue(sp.PreviewTrack('p', 'ＴＥＳＴ', ('Singer',), '', '').matches(song()))
         self.assertFalse(sp.PreviewTrack('p', 'Test', ('Singer',), '', '', version='Live').matches(song()))
@@ -72,7 +72,7 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(sp.catalog_matches([punctuation], query), [punctuation], query)
         game_credit = song(title='Test', artist='曲：A & B／歌：C(CV：D)、E(CV：F)', identifier='5')
         self.assertTrue(sp.PreviewTrack('p', 'Test', ('D', 'F'), '', '').matches(game_credit))
-        self.assertTrue(sp.PreviewTrack('p', 'Test', ('D', 'X'), '', '').matches(game_credit))
+        self.assertFalse(sp.PreviewTrack('p', 'Test', ('D', 'X'), '', '').matches(game_credit))
         self.assertFalse(sp.PreviewTrack('p', 'Test', ('X', 'Y'), '', '').matches(game_credit))
         self.assertTrue(sp.catalog_matches([game_credit], 'Test', artist='D'))
         self.assertFalse(sp.catalog_matches([game_credit], 'Test', artist='X'))
@@ -88,6 +88,12 @@ class IdentityTests(unittest.TestCase):
         # 带 CV 的署名仍逐人核对，写错歌手保持拒绝。
         self.assertEqual(sp.artist_rank('曲：Q-MHz／歌：星咲 あかり(CV：赤尾 ひかる)', ('久保ユリカ',)), 0)
         self.assertEqual(sp.artist_rank('曲：Q-MHz／歌：星咲 あかり(CV：赤尾 ひかる)', ('赤尾ひかる',)), 3)
+
+    def test_startliner_requires_original_trio(self):
+        target = song(title='STARTLINER', artist='オンゲキシューターズ')
+        for names in [('赤尾ひかる',), ('赤尾ひかる', '久保ユリカ', '春野杏')]:
+            self.assertFalse(sp.PreviewTrack('p', 'STARTLINER', names, '', '').matches(target))
+        self.assertTrue(sp.PreviewTrack('p', 'STARTLINER', ('赤尾ひかる', '久保田梨沙', '春野杏'), '', '').matches(target))
 
     def test_failure_summary_is_short(self):
         summary = sp._summarize_errors(
@@ -199,9 +205,9 @@ class ProviderTests(unittest.TestCase):
             tracks = sp.DeezerProvider().search(song(), 5, deadline=time.monotonic() + 30)
             self.assertTrue(tracks[0].is_preview)
         detail['contributors'].append({'name': 'Other', 'role': 'Featured'})
-        with patch.object(sp, 'fetch_json', side_effect=[{'data': [{'id': 1, 'title': 'Test'}]}, detail]):
-            # 主唱仍对得上，追加嘉宾不再判为错配（1.3.6 起）。
-            self.assertTrue(sp.DeezerProvider().search(song(), 5, deadline=time.monotonic() + 30))
+        with patch.object(sp, 'fetch_json', side_effect=[{'data': [{'id': 1, 'title': 'Test'}]}, detail, {'data': []}]):
+            # 未在游戏署名出现的嘉宾不能自动视作相同阵容。
+            self.assertFalse(sp.DeezerProvider().search(song(), 5, deadline=time.monotonic() + 30))
         detail['contributors'] = [{'name': 'Other', 'role': 'Main'}, {'name': 'Third', 'role': 'Featured'}]
         # 第一轮全部被拒后会退回纯曲名再搜一次，因此需要两轮响应。
         responses = [{'data': [{'id': 1, 'title': 'Test'}]}, detail] * 2
@@ -274,17 +280,14 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(sp.PreviewError, '时长不符'):
             self.service.prepare(replace(song(), song_id='another'))
 
-    def test_cover_compresses_by_default_and_keeps_original_when_disabled(self):
+    def test_cover_always_keeps_original(self):
         buffer = BytesIO()
         Image.effect_noise((1600, 1600), 100).convert('RGB').save(buffer, 'PNG')
         original = buffer.getvalue()
         self.download.return_value = original
         data = self.service.cover(song())
         self.assertEqual(self.download.call_args.args[0], song().cover_url)
-        with Image.open(BytesIO(data)) as image:
-            self.assertEqual(image.format, 'JPEG')
-            self.assertLessEqual(max(image.size), 1280)
-        self.assertLess(len(data), len(original))
+        self.assertEqual(data, original)
 
         self.config.compress_media = False
         data = self.service.cover(song())
@@ -311,7 +314,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.download.call_args_list[1].args[0],
                          'https://assets2.lxns.net/maimai/jacket/8.png')
         with Image.open(BytesIO(data)) as opened:
-            self.assertEqual(opened.format, 'JPEG')
+            self.assertEqual(opened.format, 'PNG')
         # 其它域名没有回退，仍按解码失败报错。
         self.download.side_effect = None
         self.download.return_value = b'not image'

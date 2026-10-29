@@ -227,6 +227,19 @@ def artists_compatible(expected: str, artists: tuple[str, ...]) -> tuple[bool, b
     return rank > 0, rank >= 2
 
 
+_ARTIST_TAG = re.compile(r"[\(（\[【][^\)）\]】]*[\)）\]】]\s*$")
+
+
+def _artist_key(name: str) -> str:
+    """去掉音源歌手名末尾的括号注解，如「Morrigan(WAVE)」「Singer (CV:X)」。"""
+    text = normalized(name)
+    while True:
+        stripped = _ARTIST_TAG.sub("", text)
+        if not stripped or stripped == text:
+            return text
+        text = stripped
+
+
 def artist_rank(expected: str, artists: tuple[str, ...]) -> int:
     """给音源歌手与游戏署名的吻合度打分，0 表示明确错配。
 
@@ -234,23 +247,19 @@ def artist_rank(expected: str, artists: tuple[str, ...]) -> int:
     全部判为错配。分档：
 
     - 3：音源歌手能在游戏署名里完整对上（含 feat./CV 拆分后的片段）；
-    - 2：只有前缀/扩写关系（「Morrigan(WAVE)」对「Morrigan」），仍视为同一人；
     - 1：两边文字体系不相交（罗马字对日文名），无法核对，按歌手名写法不同放过；
     - 0：有共同文字体系却完全对不上（两边都是英文名），判为不同演唱阵容。
+
+    音源所有署名都必须匹配，避免部分成员相同的不同阵容被判为强匹配。
     """
     signature = str(expected or "").strip()
     names = tuple(str(name or "") for name in (artists or ()) if str(name or "").strip())
     if not signature or not names:
         return 1
     fragments = _artist_fragments(signature)
-    normalized_names = [normalized(name) for name in names]
-    if any(_fragment_contains(fragment, name) for fragment in fragments for name in normalized_names):
+    keys = [_artist_key(name) for name in names]
+    if all(any(_fragment_contains(fragment, key) for fragment in fragments) for key in keys):
         return 3
-    for fragment in fragments:
-        for name in normalized_names:
-            short, long = (fragment, name) if len(fragment) <= len(name) else (name, fragment)
-            if len(short) >= 4 and long.startswith(short):
-                return 2
     # 组合名署名（「歌：オンゲキシューターズ」）没有成员名可核对，按无法核对处理，
     # 与「罗马字对日文名」同样放宽；仍要求曲名精确匹配，写错阵容的其他歌手不受影响。
     if _unit_only_credit(signature):
@@ -432,6 +441,12 @@ class PreviewTrack:
             return False
         if self.version and search_normalized(self.version) not in title_core(song.title):
             return False
+        # STARTLINER 原版为三人阵容；组合名不能区分独唱与其他角色版本。
+        if song.game == 'ongeki' and title_core(song.title) == 'startliner':
+            names = normalized('、'.join(self.artists))
+            members = (('赤尾ひかる', '星咲あかり'), ('久保田梨沙', '藤沢柚子'), ('春野杏', '三角葵'))
+            if not all(any(alias in names for alias in aliases) for aliases in members):
+                return False
         return artists_compatible(song.artist, self.artists)[0]
 
 
@@ -813,7 +828,7 @@ class SongPreviewService:
     def prepare(self, song):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cleanup()
-        key = hashlib.sha256(json.dumps([song.game, song.song_id, song.title, song.artist,
+        key = hashlib.sha256(json.dumps([2, song.game, song.song_id, song.title, song.artist,
             self.config.max_duration_seconds, self.config.providers, self.config.allow_preview_fallback,
             self.config.netease_api_url, self.config.meting_api_url,
             hashlib.sha256(self.config.netease_cookie.encode()).hexdigest()], ensure_ascii=False).encode()).hexdigest()
@@ -935,17 +950,15 @@ class SongPreviewService:
         except PreviewError as exc:
             raise PreviewError(f'曲绘获取失败：{exc}') from exc
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
-            raise PreviewError('曲绘解码或压缩失败：接口返回的不是有效图片') from exc
+            raise PreviewError('曲绘解码失败：接口返回的不是有效图片') from exc
 
     def _cover_from_bytes(self, payload: bytes) -> bytes:
         with Image.open(BytesIO(payload)) as image:
             if image.width * image.height > 16000000:
                 raise PreviewError("曲绘尺寸超过限制")
             image.load()
-            if voice_mode(self.config.compress_media) == 'none':
-                # 校验后原样发送，不缩放、不重新编码，也不添加文字或边框。
-                return payload
-            return compress_cover(image, payload)
+            # 曲绘始终发送原始字节；语音压缩配置不影响图片。
+            return payload
 
     def cleanup(self):
         files = []

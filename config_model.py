@@ -433,7 +433,7 @@ class PreviewConfig(PluginConfigBase):
     allow_preview_fallback: bool = Field(default=False, description="全部完整音源失败后是否发送明确标注的短试听片段")
     compress_media: str = Field(
         default="full",
-        description="预览压缩档位：none=原图原WAV；half=较高码率优先音质，超限只保留开头可容纳部分；full=全长自适应低码率",
+        description="预览压缩档位：none=原WAV（曲绘所有档位均发送原图）；half=较高码率优先音质，超限只保留开头可容纳部分；full=全长自适应低码率",
     )
     half_bitrate_kbps: int = Field(default=64, ge=8, le=320, description="half 档位的 MP3 码率（kbps），越高音质越好、可发送时长越短")
     max_duration_seconds: int = Field(default=1200, ge=60, le=3600, description="音频最长秒数，默认20分钟；超限拒绝发送，不截断")
